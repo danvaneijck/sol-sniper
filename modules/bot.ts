@@ -356,7 +356,7 @@ class SolanaBot {
                 slippage: input.slippage,
             });
 
-            if (amountOut.numerator <= 0 || minAmountOut.numerator <= 0) {
+            if (amountOut.numerator <= 5 || minAmountOut.numerator <= 5) {
                 console.log(`amount out is 0, setting to min amount out`);
                 amountOut.numerator = new BN(1, 9);
                 minAmountOut.numerator = new BN(1, 9);
@@ -375,8 +375,6 @@ class SolanaBot {
                     fixedSide: "in",
                     makeTxVersion,
                 });
-
-            // console.log(JSON.stringify(innerTransactions, null, 2));
 
             return {
                 txids: await buildAndSendTx(
@@ -570,7 +568,11 @@ class SolanaBot {
         } else {
             nonBaseBalance = await (
                 await this.getTokenAccounts(this.wallet.publicKey)
-            ).find((x) => x.accountInfo.mint == nonBaseMint.toBase58());
+            ).find((x) => x.accountInfo.mint == nonBaseMint);
+            if (!nonBaseBalance) {
+                console.log("could not find balance");
+                return;
+            }
             nonBaseBalance = Number(nonBaseBalance.accountInfo.amount);
         }
 
