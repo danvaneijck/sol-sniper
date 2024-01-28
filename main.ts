@@ -24,11 +24,12 @@ const main = async () => {
     await solanaBot.scanForNewPairs(openBookAddress);
 
     const targetPool = new PublicKey(
-        "GRNSwYv5WhmYKJNdummb329ioBKkSrAS62b61BaA8Htn"
+        "FCs2m1V4MB1L85yYKKHBckCyz5TU2xqTpnJMnqiCQA6N"
     );
-    await solanaBot.buyToken(targetPool, 0.0001);
-    await new Promise((resolve) => setTimeout(resolve, 5000));
-    await solanaBot.sellToken(targetPool);
+
+    // await solanaBot.buyToken(targetPool, 0.01);
+    // await new Promise((resolve) => setTimeout(resolve, 5000));
+    // await solanaBot.sellToken(targetPool);
 };
 
 main();

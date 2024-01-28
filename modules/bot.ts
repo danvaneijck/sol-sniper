@@ -45,6 +45,7 @@ type Position = {
     timeBought: typeof moment;
     profit: string;
     isMoonBag: boolean;
+    pairInstance: any;
 };
 
 class SolanaBot {
@@ -294,13 +295,14 @@ class SolanaBot {
     }
 
     async checkConfirmation(txSignature: string): Promise<boolean> {
+        console.log("waiting for tx to confirm...");
         return new Promise<boolean>((resolve, reject) => {
             const subscriptionId = this.connection.onSignature(
                 txSignature,
                 async (result: { err: null }, context: any) => {
                     console.log("Transaction signature result:", result);
                     if (result.err === null) {
-                        console.log("Transaction confirmed!");
+                        console.log("Transaction confirmed!".bg_green);
                         // this.connection.removeSignatureListener(subscriptionId);
                         resolve(true);
                     } else {
@@ -310,66 +312,67 @@ class SolanaBot {
                 "confirmed"
             );
 
-            this.connection
-                .getSignatureStatuses([txSignature])
-                .then((status: any) => {
-                    const signatureStatus = status.value[0];
-                    if (signatureStatus?.confirmations > 0) {
-                        console.log("Transaction already confirmed!");
-                        this.connection.removeSignatureListener(subscriptionId);
-                        resolve(true);
-                    }
-                })
-                .catch((error: any) => {
-                    console.log(error);
-                    reject(error);
-                });
+            // this.connection
+            //     .getSignatureStatuses([txSignature])
+            //     .then((status: any) => {
+            //         const signatureStatus = status.value[0];
+            //         if (signatureStatus?.confirmations > 0) {
+            //             console.log("Transaction already confirmed!");
+            //             this.connection.removeSignatureListener(subscriptionId);
+            //             resolve(true);
+            //         }
+            //     })
+            //     .catch((error: any) => {
+            //         console.log(error);
+            //         reject(error);
+            //     });
         });
     }
 
     async swap(input: SwapTxInput) {
-        const targetPoolInfo = await formatAmmKeysById(
-            this.connection,
-            input.targetPool
-        );
-        assert(targetPoolInfo, "cannot find the target pool");
-        const poolKeys = jsonInfo2PoolKeys(
-            targetPoolInfo
-        ) as typeof LiquidityPoolKeys;
-
-        let { amountOut, minAmountOut } = Liquidity.computeAmountOut({
-            poolKeys: poolKeys,
-            poolInfo: await Liquidity.fetchInfo({
-                connection: this.connection,
-                poolKeys,
-            }),
-            amountIn: input.inputTokenAmount,
-            currencyOut: input.outputToken,
-            slippage: input.slippage,
-        });
-
-        if (amountOut.numerator <= 0 || minAmountOut.numerator <= 0) {
-            console.log(`amount out is 0, setting to min amount out`);
-            amountOut.numerator = new BN(1, 9);
-            minAmountOut.numerator = new BN(1, 9);
-        }
-
-        const { innerTransactions } = await Liquidity.makeSwapInstructionSimple(
-            {
-                connection: this.connection,
-                poolKeys,
-                userKeys: {
-                    tokenAccounts: this.walletTokenAccounts,
-                    owner: this.wallet.publicKey,
-                },
-                amountIn: input.inputTokenAmount,
-                amountOut: minAmountOut,
-                fixedSide: "in",
-                makeTxVersion,
-            }
-        );
-
         try {
+            const targetPoolInfo = await formatAmmKeysById(
+                this.connection,
+                input.targetPool
+            );
+            assert(targetPoolInfo, "cannot find the target pool");
+            const poolKeys = jsonInfo2PoolKeys(
+                targetPoolInfo
+            ) as typeof LiquidityPoolKeys;
+
+            let { amountOut, minAmountOut } = Liquidity.computeAmountOut({
+                poolKeys: poolKeys,
+                poolInfo: await Liquidity.fetchInfo({
+                    connection: this.connection,
+                    poolKeys,
+                }),
+                amountIn: input.inputTokenAmount,
+                currencyOut: input.outputToken,
+                slippage: input.slippage,
+            });
+
+            if (amountOut.numerator <= 0 || minAmountOut.numerator <= 0) {
+                console.log(`amount out is 0, setting to min amount out`);
+                amountOut.numerator = new BN(1, 9);
+                minAmountOut.numerator = new BN(1, 9);
+            }
+
+            const { innerTransactions } =
+                await Liquidity.makeSwapInstructionSimple({
+                    connection: this.connection,
+                    poolKeys,
+                    userKeys: {
+                        tokenAccounts: this.walletTokenAccounts,
+                        owner: this.wallet.publicKey,
+                    },
+                    amountIn: input.inputTokenAmount,
+                    amountOut: minAmountOut,
+                    fixedSide: "in",
+                    makeTxVersion,
+                });
+
+            console.log(innerTransactions);
+
             return {
                 txids: await buildAndSendTx(
                     this.connection,
@@ -377,7 +380,9 @@ class SolanaBot {
                     innerTransactions
                 ),
             };
-        } catch (e) {}
+        } catch (e) {
+            console.log(e);
+        }
         return false;
     }
 
@@ -432,7 +437,7 @@ class SolanaBot {
             });
 
             if (!result) {
-                console.log("swap tx fail");
+                console.log("swap tx fail", result);
             } else {
                 if (result.txids.length > 0) {
                     const tx = result.txids[0];
@@ -487,6 +492,7 @@ class SolanaBot {
                             timeBought: moment(),
                             profit: profit.toString(),
                             isMoonBag: false,
+                            pairInstance: pairInstance,
                         });
 
                         this.sendMessageToDiscord(
@@ -522,7 +528,14 @@ class SolanaBot {
     async sellToken(pair: typeof PublicKey) {
         console.log(`attempt sell pair ${pair.toBase58()}`.bg_cyan);
 
-        const pairInstance = await this.getPoolInfo(pair);
+        let position = this.positions.get(pair.toBase58());
+
+        let pairInstance;
+        if (position) {
+            pairInstance = position.pairInstance;
+        } else {
+            pairInstance = await this.getPoolInfo(pair);
+        }
 
         const baseMint =
             pairInstance.baseMint == this.baseAsset
@@ -546,14 +559,21 @@ class SolanaBot {
             "MEME"
         );
 
-        const nonBaseBalance = await (
-            await this.getTokenAccounts(this.wallet.publicKey)
-        ).find((x) => x.accountInfo.mint == nonBaseMint.toBase58());
+        let nonBaseBalance;
+        if (position) {
+            nonBaseBalance = Number(position.balance);
+        } else {
+            nonBaseBalance = await (
+                await this.getTokenAccounts(this.wallet.publicKey)
+            ).find((x) => x.accountInfo.mint == nonBaseMint.toBase58());
+            nonBaseBalance = Number(nonBaseBalance.accountInfo.amount);
+        }
+
         if (!nonBaseBalance) {
             console.log("could not find balance");
             return;
         }
-        let amount = parseInt(nonBaseBalance.accountInfo.amount);
+        let amount = nonBaseBalance;
 
         if (amount == 0 || !amount) {
             return;
@@ -580,7 +600,7 @@ class SolanaBot {
             });
 
             if (!result) {
-                console.log("swap tx fail");
+                console.log("swap tx fail", result);
             } else {
                 if (result.txids.length > 0) {
                     const tx = result.txids[0];
@@ -615,9 +635,6 @@ class SolanaBot {
                             baseAmountGained
                         );
 
-                        let position = this.positions.get(pair.toBase58());
-                        console.log(position);
-
                         let profit =
                             baseAmountGained -
                             ((Number(position?.amountIn) || 0) +
@@ -634,6 +651,7 @@ class SolanaBot {
 
                         this.positions.set(pair.toBase58(), {
                             pairContract: position?.pairContract || "",
+                            pairInstance: position?.pairInstance || "",
                             tokenContract: position?.tokenContract || "",
                             timeBought: position?.timeBought || moment(),
                             amountIn: updatedAmountIn.toString(),
