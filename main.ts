@@ -24,7 +24,7 @@ const main = async () => {
     await solanaBot.scanForNewPairs(openBookAddress);
 
     const targetPool = new PublicKey(
-        "FCs2m1V4MB1L85yYKKHBckCyz5TU2xqTpnJMnqiCQA6N"
+        "76YjbeZeqA8BTAk39qksVxbbdQq8ERho6netqM3odfUQ"
     );
 
     // await solanaBot.buyToken(targetPool, 0.01);

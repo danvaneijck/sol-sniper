@@ -331,6 +331,11 @@ class SolanaBot {
 
     async swap(input: SwapTxInput) {
         try {
+            this.walletTokenAccounts = await getWalletTokenAccount(
+                this.connection,
+                this.wallet.publicKey
+            );
+
             const targetPoolInfo = await formatAmmKeysById(
                 this.connection,
                 input.targetPool
@@ -371,7 +376,7 @@ class SolanaBot {
                     makeTxVersion,
                 });
 
-            console.log(innerTransactions);
+            // console.log(JSON.stringify(innerTransactions, null, 2));
 
             return {
                 txids: await buildAndSendTx(
