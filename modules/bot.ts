@@ -1,5 +1,5 @@
 require("dotenv").config();
-const { Connection, PublicKey, Keypair } = require("@solana/web3.js");
+const { Connection, Keypair, PublicKey } = require("@solana/web3.js");
 const { TOKEN_PROGRAM_ID } = require("@solana/spl-token");
 const {
     TokenAccount,
@@ -67,6 +67,9 @@ class SolanaBot {
     monitoringBasePairIntervalId: undefined | NodeJS.Timeout;
     raydiumLiquidityProgram: string;
     walletTokenAccounts: any;
+    pairPriceMonitoringIntervals: Map<any, any>;
+    sellPairPriceMonitoringIntervals: Map<any, any>;
+    lastPrices: Map<any, any>;
 
     constructor(
         privateKey: string | undefined,
@@ -83,6 +86,10 @@ class SolanaBot {
 
         this.positions = new Map();
         this.allPairs = new Map();
+
+        this.pairPriceMonitoringIntervals = new Map();
+        this.sellPairPriceMonitoringIntervals = new Map();
+        this.lastPrices = new Map();
 
         this.raydiumLiquidityProgram =
             "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8";
@@ -133,11 +140,12 @@ class SolanaBot {
     }
 
     async init() {
+        await this.loadFromFile();
+        await this.updateBaseAssetPrice();
         this.walletTokenAccounts = await getWalletTokenAccount(
             this.connection,
             this.wallet.publicKey
         );
-        await this.loadFromFile();
     }
 
     async loadFromFile(): Promise<void> {
@@ -244,8 +252,6 @@ class SolanaBot {
             this.discordClient.user.setActivity(activityText, {
                 type: ActivityType.Watching,
             });
-        } else {
-            console.log("cannot set disc activity");
         }
     }
 
@@ -294,8 +300,17 @@ class SolanaBot {
         return poolState;
     }
 
+    async updateTokenAccounts() {
+        this.walletTokenAccounts = await getWalletTokenAccount(
+            this.connection,
+            this.wallet.publicKey
+        );
+    }
+
     async checkConfirmation(txSignature: string): Promise<boolean> {
-        console.log("waiting for tx to confirm...");
+        console.log(
+            `waiting for tx to confirm... https://solscan.io/tx/${txSignature}`
+        );
         return new Promise<boolean>((resolve, reject) => {
             const subscriptionId = this.connection.onSignature(
                 txSignature,
@@ -312,30 +327,25 @@ class SolanaBot {
                 "confirmed"
             );
 
-            // this.connection
-            //     .getSignatureStatuses([txSignature])
-            //     .then((status: any) => {
-            //         const signatureStatus = status.value[0];
-            //         if (signatureStatus?.confirmations > 0) {
-            //             console.log("Transaction already confirmed!");
-            //             this.connection.removeSignatureListener(subscriptionId);
-            //             resolve(true);
-            //         }
-            //     })
-            //     .catch((error: any) => {
-            //         console.log(error);
-            //         reject(error);
-            //     });
+            this.connection
+                .getSignatureStatuses([txSignature])
+                .then((status: any) => {
+                    const signatureStatus = status.value[0];
+                    if (signatureStatus?.confirmations > 0) {
+                        console.log("Transaction already confirmed!");
+                        this.connection.removeSignatureListener(subscriptionId);
+                        resolve(true);
+                    }
+                })
+                .catch((error: any) => {
+                    console.log(error);
+                    reject(error);
+                });
         });
     }
 
     async swap(input: SwapTxInput) {
         try {
-            this.walletTokenAccounts = await getWalletTokenAccount(
-                this.connection,
-                this.wallet.publicKey
-            );
-
             const targetPoolInfo = await formatAmmKeysById(
                 this.connection,
                 input.targetPool
@@ -391,7 +401,10 @@ class SolanaBot {
 
     async buyToken(pair: typeof PublicKey, amount: number) {
         console.log(
-            `attempt buy ${amount} SOL from pair ${pair.toBase58()}`.bg_cyan
+            `${moment().format(
+                "hh:mm:ss"
+            )} attempt buy ${amount} SOL from pair ${pair.toBase58()}`
+                .bg_magenta
         );
         const pairInstance = await this.getPoolInfo(pair);
 
@@ -513,6 +526,10 @@ class SolanaBot {
                                     baseAmountLost / Math.pow(10, 9)
                                 }`
                         );
+
+                        await this.updateTokenAccounts();
+                        await this.monitorPairToSell(pair, 5);
+
                         return true;
                     } else {
                         console.log("tx fail");
@@ -528,8 +545,15 @@ class SolanaBot {
         return false;
     }
 
-    async sellToken(pair: typeof PublicKey) {
-        console.log(`attempt sell pair ${pair.toBase58()}`.bg_cyan);
+    async sellToken(
+        pair: typeof PublicKey,
+        amount: number | undefined = undefined
+    ) {
+        console.log(
+            `${moment().format(
+                "hh:mm:ss"
+            )} attempt sell pair ${pair.toBase58()}`.bg_cyan
+        );
 
         let position = this.positions.get(pair.toBase58());
 
@@ -537,6 +561,7 @@ class SolanaBot {
         if (position) {
             pairInstance = position.pairInstance;
         } else {
+            console.log("get fresh pair instance");
             pairInstance = await this.getPoolInfo(pair);
         }
 
@@ -562,25 +587,35 @@ class SolanaBot {
             "MEME"
         );
 
-        let nonBaseBalance;
-        if (position) {
-            nonBaseBalance = Number(position.balance);
-        } else {
-            nonBaseBalance = await (
-                await this.getTokenAccounts(this.wallet.publicKey)
-            ).find((x) => x.accountInfo.mint == nonBaseMint);
+        if (!amount) {
+            let nonBaseBalance;
+            if (position) {
+                nonBaseBalance = Number(position.balance);
+            } else {
+                let accounts = await this.getTokenAccounts(
+                    this.wallet.publicKey
+                );
+                nonBaseBalance = accounts.find(
+                    (x) => x.accountInfo.mint.toBase58() == nonBaseMint
+                );
+
+                if (!nonBaseBalance) {
+                    console.log("could not find balance in token account");
+                    return;
+                } else {
+                    nonBaseBalance = Number(nonBaseBalance.accountInfo.amount);
+                    console.log(
+                        `found balance ${nonBaseBalance} in token accounts`
+                    );
+                }
+            }
+
             if (!nonBaseBalance) {
                 console.log("could not find balance");
                 return;
             }
-            nonBaseBalance = Number(nonBaseBalance.accountInfo.amount);
+            amount = nonBaseBalance;
         }
-
-        if (!nonBaseBalance) {
-            console.log("could not find balance");
-            return;
-        }
-        let amount = nonBaseBalance;
 
         if (amount == 0 || !amount) {
             return;
@@ -613,7 +648,6 @@ class SolanaBot {
                     const tx = result.txids[0];
                     const confirmed = await this.checkConfirmation(tx);
                     if (confirmed === true) {
-                        console.log("Swap transaction success");
                         let txInfo = await this.decodeSignature(tx);
                         let preBalance = txInfo.meta.preTokenBalances.find(
                             (x: { mint: any; owner: any }) =>
@@ -686,9 +720,16 @@ class SolanaBot {
                                 `SOL received: ${(
                                     baseAmountGained / Math.pow(10, 9)
                                 ).toFixed(5)}\n` +
-                                `profit: ${(profit / Math.pow(10, 9)).toFixed(
+                                `PnL: ${(profit / Math.pow(10, 9)).toFixed(
                                     5
-                                )}\n`
+                                )} ($${(
+                                    (profit / Math.pow(10, 9)) *
+                                    this.baseAssetPrice
+                                ).toFixed(2)}) ${
+                                    profit > 0
+                                        ? ":dollar:"
+                                        : ":small_red_triangle_down:"
+                                }\n`
                         );
                         return true;
                     } else {
@@ -723,7 +764,7 @@ class SolanaBot {
     }
 
     async decodeSignature(signature: any) {
-        let retries = 1;
+        let retries = 2;
         while (retries > 0) {
             try {
                 const transaction = await this.connection.getTransaction(
@@ -735,6 +776,7 @@ class SolanaBot {
                 return transaction;
             } catch (error) {
                 retries--;
+                await new Promise((resolve) => setTimeout(resolve, 2000));
                 if (retries === 0) {
                     console.error(`Unable to decode transaction ${error}`);
                 } else {
@@ -829,8 +871,6 @@ class SolanaBot {
             poolOpenTime > moment().subtract(20, "seconds")
         ) {
             await this.buyToken(pair, this.config.snipeAmount);
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            await this.sellToken(pair);
         } else if (
             liquidity < this.config.upperLiquidityBound &&
             liquidity > this.config.lowerLiquidityBound &&
@@ -845,8 +885,6 @@ class SolanaBot {
                 console.log("trigger job");
                 try {
                     await this.buyToken(pair, this.config.snipeAmount);
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
-                    await this.sellToken(pair);
                 } catch (error) {
                     console.error("Error scheduling buy operation:", error);
                 }
@@ -974,6 +1012,455 @@ class SolanaBot {
                 }
             }
         });
+    }
+
+    async monitorPairForPriceChange(
+        pair: typeof PublicKey,
+        intervalInSeconds: number,
+        trackingDurationMinutes: number,
+        priceChangeThreshold: number
+    ) {
+        try {
+            if (this.pairPriceMonitoringIntervals.has(pair.toBase58())) {
+                console.log(
+                    `Pair ${pair.toBase58()} is already being monitored.`
+                );
+                return;
+            }
+
+            let lastPrices = this.lastPrices.get(pair.toBase58()) || [];
+
+            const monitoringIntervalId = setInterval(async () => {
+                const targetPoolInfo = await formatAmmKeysById(
+                    this.connection,
+                    pair.toBase58()
+                );
+                assert(targetPoolInfo, "cannot find the target pool");
+                const poolKeys = jsonInfo2PoolKeys(
+                    targetPoolInfo
+                ) as typeof LiquidityPoolKeys;
+
+                let position = this.positions.get(pair.toBase58());
+
+                let pairInstance;
+                if (position) {
+                    pairInstance = position.pairInstance;
+                } else {
+                    pairInstance = await this.getPoolInfo(pair);
+                }
+
+                const output =
+                    pairInstance.baseMint == this.baseAsset
+                        ? pairInstance.quoteMint
+                        : pairInstance.baseMint;
+                const input =
+                    pairInstance.baseMint == this.baseAsset
+                        ? pairInstance.baseMint
+                        : pairInstance.quoteMint;
+                const inputDecimals =
+                    pairInstance.baseMint == this.baseAsset
+                        ? parseInt(pairInstance.baseDecimal)
+                        : parseInt(pairInstance.quoteDecimal);
+                const outputDecimals =
+                    pairInstance.baseMint == this.baseAsset
+                        ? parseInt(pairInstance.quoteDecimal)
+                        : parseInt(pairInstance.baseDecimal);
+
+                const inputToken = new Token(
+                    TOKEN_PROGRAM_ID,
+                    new PublicKey(input),
+                    inputDecimals,
+                    "WSOL",
+                    "WSOL"
+                );
+                const outputToken = new Token(
+                    TOKEN_PROGRAM_ID,
+                    new PublicKey(output),
+                    outputDecimals
+                );
+
+                const inputTokenAmount = new TokenAmount(
+                    inputToken,
+                    1 * Math.pow(10, inputDecimals)
+                );
+
+                let slippage = new Percent(2, 100);
+
+                try {
+                    let { amountOut, minAmountOut } =
+                        Liquidity.computeAmountOut({
+                            poolKeys: poolKeys,
+                            poolInfo: await Liquidity.fetchInfo({
+                                connection: this.connection,
+                                poolKeys,
+                            }),
+                            amountIn: inputTokenAmount,
+                            currencyOut: outputToken,
+                            slippage: slippage,
+                        });
+
+                    const currentPrice =
+                        this.baseAssetPrice / Number(amountOut.toFixed());
+
+                    lastPrices.push(currentPrice);
+                    lastPrices = lastPrices.slice(
+                        (-trackingDurationMinutes * 60) / intervalInSeconds
+                    );
+
+                    const newHighestPrice = Math.max(...lastPrices, 0);
+                    const newLowestPrice = Math.min(...lastPrices, Infinity);
+
+                    const priceChangeToHighest =
+                        ((currentPrice - newHighestPrice) / newHighestPrice) *
+                        100;
+                    const priceChangeToLowest =
+                        ((currentPrice - newLowestPrice) / newLowestPrice) *
+                        100;
+
+                    const baseDecimal =
+                        10 ** pairInstance.baseDecimal.toNumber();
+                    const quoteDecimal =
+                        10 ** pairInstance.quoteDecimal.toNumber();
+
+                    const baseTokenAmount =
+                        await this.connection.getTokenAccountBalance(
+                            pairInstance.baseVault
+                        );
+                    const quoteTokenAmount =
+                        await this.connection.getTokenAccountBalance(
+                            pairInstance.quoteVault
+                        );
+
+                    const basePnl =
+                        pairInstance.baseNeedTakePnl.toNumber() / baseDecimal;
+                    const quotePnl =
+                        pairInstance.quoteNeedTakePnl.toNumber() / quoteDecimal;
+
+                    const base =
+                        (baseTokenAmount.value?.uiAmount || 0) - basePnl;
+                    const quote =
+                        (quoteTokenAmount.value?.uiAmount || 0) - quotePnl;
+
+                    let baseAssetAmount =
+                        pairInstance.baseMint == this.baseAsset ? base : quote;
+
+                    const liquidity = this.baseAssetPrice * baseAssetAmount * 2;
+
+                    if (liquidity < 1) {
+                        let message = `:small_red_triangle_down: ${pair.toBase58()} rugged!`;
+                        this.sendMessageToDiscord(message);
+                    } else {
+                        if (
+                            Math.abs(priceChangeToHighest) >
+                            priceChangeThreshold
+                        ) {
+                            let message =
+                                `:small_red_triangle_down: ${pair.toBase58()} Price is down ${parseFloat(
+                                    priceChangeToHighest.toString()
+                                ).toFixed(2)}% in the last ` +
+                                `${trackingDurationMinutes} minutes. current: $${parseFloat(
+                                    currentPrice.toString()
+                                ).toFixed(10)}, ` +
+                                `high: $${newHighestPrice.toFixed(
+                                    10
+                                )}, liquidity: $${Math.round(liquidity)}`;
+                            this.sendMessageToDiscord(message);
+                            this.lastPrices.delete(pair.toBase58());
+                            lastPrices = [];
+                        }
+
+                        if (priceChangeToLowest > priceChangeThreshold) {
+                            let message =
+                                `:green_circle: ${pair.toBase58()} price is up ${parseFloat(
+                                    priceChangeToLowest.toString()
+                                ).toFixed(2)}% in the last ` +
+                                `${trackingDurationMinutes} minutes. current: $${parseFloat(
+                                    currentPrice.toString()
+                                ).toFixed(10)}, ` +
+                                `low: $${newLowestPrice.toFixed(
+                                    10
+                                )}, liquidity: $${Math.round(liquidity)}`;
+                            this.sendMessageToDiscord(message);
+                            this.lastPrices.delete(pair.toBase58());
+                            lastPrices = [];
+                        }
+                    }
+
+                    console.log(
+                        `${pair.toBase58()} price $${parseFloat(
+                            currentPrice.toString()
+                        ).toFixed(12)}, liquidity: $${Math.round(liquidity)}`
+                            .yellow
+                    );
+
+                    if (currentPrice == Infinity || liquidity < 1) {
+                        this.stopMonitoringPairForPriceChange(pair);
+                    }
+                } catch (e) {
+                    console.log(e);
+                }
+            }, intervalInSeconds * 1000);
+
+            this.pairPriceMonitoringIntervals.set(
+                pair.toBase58(),
+                monitoringIntervalId
+            );
+
+            console.log(
+                `Price - Monitoring started for ${pair.toBase58()}.`.bg_cyan
+            );
+        } catch (error) {
+            console.error("Error monitoring pair:", error);
+        }
+    }
+
+    stopMonitoringPairForPriceChange(pair: typeof PublicKey) {
+        if (this.pairPriceMonitoringIntervals.has(pair.toBase58())) {
+            clearInterval(
+                this.pairPriceMonitoringIntervals.get(pair.toBase58())
+            );
+            this.pairPriceMonitoringIntervals.delete(pair.toBase58());
+
+            console.log(`Monitoring stopped for ${pair.toBase58()}.`.bg_yellow);
+        } else {
+            console.log(`Pair ${pair.toBase58()} is not being monitored.`.gray);
+        }
+    }
+
+    async monitorPairToSell(pair: typeof PublicKey, intervalInSeconds: number) {
+        try {
+            let pairName = `${pair.toBase58()}`;
+
+            if (this.sellPairPriceMonitoringIntervals.has(pairName)) {
+                console.log(
+                    `Pair ${pairName} is already being monitored to sell.`
+                );
+                return;
+            }
+
+            const monitoringIntervalId = setInterval(async () => {
+                let position = this.positions.get(pair.toBase58());
+
+                if (!position) return;
+
+                let pairInstance = position.pairInstance;
+
+                const targetPoolInfo = await formatAmmKeysById(
+                    this.connection,
+                    pair.toBase58()
+                );
+                assert(targetPoolInfo, "cannot find the target pool");
+                const poolKeys = jsonInfo2PoolKeys(
+                    targetPoolInfo
+                ) as typeof LiquidityPoolKeys;
+
+                const baseMint =
+                    pairInstance.baseMint == this.baseAsset
+                        ? pairInstance.baseMint
+                        : pairInstance.quoteMint;
+                const nonBaseMint =
+                    pairInstance.baseMint == this.baseAsset
+                        ? pairInstance.quoteMint
+                        : pairInstance.baseMint;
+
+                const nonBaseDecimals =
+                    pairInstance.baseMint == this.baseAsset
+                        ? parseInt(pairInstance.quoteDecimal)
+                        : parseInt(pairInstance.baseDecimal);
+
+                const nonBaseToken = new Token(
+                    TOKEN_PROGRAM_ID,
+                    new PublicKey(nonBaseMint),
+                    nonBaseDecimals,
+                    "MEME",
+                    "MEME"
+                );
+
+                const inputTokenAmount = new TokenAmount(
+                    nonBaseToken,
+                    Number(position.balance)
+                );
+
+                const outputToken = new Token(
+                    TOKEN_PROGRAM_ID,
+                    new PublicKey(baseMint),
+                    9,
+                    "WSOL",
+                    "WSOL"
+                );
+
+                let slippage = new Percent(10, 100);
+
+                let quote;
+                try {
+                    let { amountOut, minAmountOut } =
+                        Liquidity.computeAmountOut({
+                            poolKeys: poolKeys,
+                            poolInfo: await Liquidity.fetchInfo({
+                                connection: this.connection,
+                                poolKeys,
+                            }),
+                            amountIn: inputTokenAmount,
+                            currencyOut: outputToken,
+                            slippage: slippage,
+                        });
+                    quote = Number(amountOut.toFixed());
+                } catch (e) {
+                    console.log(e);
+                }
+
+                let result = null;
+
+                let currentTime = moment();
+                if (
+                    currentTime >
+                    moment(position.timeBought).add(
+                        this.config.tradeTimeLimit,
+                        "minute"
+                    )
+                ) {
+                    console.log(
+                        `trade time limit reached (${this.config.tradeTimeLimit} minutes)`
+                    );
+                    await this.sendMessageToDiscord(
+                        `trade time limit reached for ${pairName} (${this.config.tradeTimeLimit} minutes)`
+                    );
+                    this.stopMonitoringPairToSell(pair);
+                    result = await this.sellToken(pair);
+                    return;
+                }
+
+                if (quote) {
+                    const baseAssetPriceConverted = this.baseAssetPrice;
+                    const convertedQuote = quote * Math.pow(10, 9);
+                    const amountBack = quote.toFixed(6);
+                    const usdValue = quote * baseAssetPriceConverted;
+
+                    const convertedBalance =
+                        Number(position.balance) /
+                        Math.pow(10, nonBaseDecimals);
+
+                    const price = usdValue / convertedBalance;
+
+                    const moonBagGoal = Math.round(
+                        this.config.snipeAmount * 5 * Math.pow(10, 6)
+                    );
+
+                    if (
+                        position.isMoonBag &&
+                        Number(quote) > Number(moonBagGoal)
+                    ) {
+                        console.log(
+                            `taking profit on moon bag for ${pairName}`
+                        );
+                        this.stopMonitoringPairToSell(pair);
+                        result = await this.sellToken(pair);
+                        return;
+                    }
+                    if (position.isMoonBag) {
+                        console.log(
+                            `${pairName} moon bag balance: ${convertedBalance.toFixed(
+                                2
+                            )}, ` +
+                                `price: $${price.toFixed(
+                                    8
+                                )} (${amountBack} SOL $${usdValue.toFixed(2)})`
+                        );
+                        return;
+                    }
+
+                    let amountIn =
+                        Number(position.amountIn) + Number(position.profit);
+
+                    const percentageIncrease =
+                        ((convertedQuote - amountIn) / amountIn) * 100;
+
+                    if (
+                        percentageIncrease <= this.config.stopLoss * 100 * -1 &&
+                        quote < amountIn
+                    ) {
+                        console.log(
+                            `stop loss hit for ${pairName} ${percentageIncrease}%`
+                                .bg_red
+                        );
+                        await this.sendMessageToDiscord(
+                            `stop loss hit for ${pairName} ${percentageIncrease.toFixed(
+                                2
+                            )}% ${this.discordTag}`
+                        );
+                        this.stopMonitoringPairToSell(pair);
+
+                        result = await this.sellToken(pair);
+                        return;
+                    }
+                    if (
+                        percentageIncrease >=
+                        this.config.profitGoalPercent * 100
+                    ) {
+                        console.log(
+                            `profit goal reached for ${pairName} ${percentageIncrease.toFixed(
+                                2
+                            )}%`
+                        );
+                        this.stopMonitoringPairToSell(pair);
+                        if (
+                            percentageIncrease >=
+                            this.config.profitGoalPercent * 2
+                        ) {
+                            result = await this.sellToken(
+                                pair,
+                                Math.round(Number(position.balance) * 0.6)
+                            );
+                        } else {
+                            result = await this.sellToken(
+                                pair,
+                                Math.round(
+                                    Number(position.balance) *
+                                        (1 - this.config.moonBagPercent)
+                                )
+                            );
+                        }
+                        return result;
+                    }
+                    let message =
+                        `${pairName}: balance: ${convertedBalance.toFixed(
+                            2
+                        )} ${pairName}, ` +
+                        `price: $${price.toFixed(
+                            8
+                        )} (${amountBack} SOL $${usdValue.toFixed(
+                            3
+                        )}) ${percentageIncrease.toFixed(2)}%`;
+
+                    console.log(
+                        percentageIncrease > 0 ? message.green : message.red
+                    );
+                }
+            }, intervalInSeconds * 1000);
+
+            this.sellPairPriceMonitoringIntervals.set(
+                pair.contract_addr,
+                monitoringIntervalId
+            );
+
+            console.log(`Sell - Monitoring started for ${pairName}.`.bg_cyan);
+        } catch (error) {
+            console.error("Error monitoring pair:", error);
+        }
+    }
+
+    stopMonitoringPairToSell(pair: typeof PublicKey) {
+        let pairName = `${pair.toBase58()}`;
+        if (this.sellPairPriceMonitoringIntervals.has(pair.contract_addr)) {
+            clearInterval(
+                this.sellPairPriceMonitoringIntervals.get(pair.contract_addr)
+            );
+            this.sellPairPriceMonitoringIntervals.delete(pair.contract_addr);
+
+            console.log(`Monitoring to sell stopped for ${pairName}.`.bg_cyan);
+        } else {
+            console.log(`Pair ${pairName} is not being monitored.`.gray);
+        }
     }
 }
 
