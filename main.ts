@@ -7,13 +7,13 @@ const main = async () => {
     const privateKey = process.env.KEY;
 
     const config = {
-        snipeAmount: 0.01, // %
-        profitGoalPercent: 0.3, // %
-        moonBagPercent: 0.1, // %
-        stopLoss: 0.3, // %
+        snipeAmount: 0.015, // %
+        profitGoalPercent: 0.15, // %
+        moonBagPercent: 0, // %
+        stopLoss: 0.5, // %
         tradeTimeLimit: 5, // minutes
-        lowerLiquidityBound: 2000, // USD
-        upperLiquidityBound: 20000, // USD
+        lowerLiquidityBound: 1000, // USD
+        upperLiquidityBound: 12000, // USD
     };
 
     const solanaBot = new SolanaBot(privateKey, config);
@@ -25,14 +25,14 @@ const main = async () => {
     await solanaBot.scanForNewPairs(openBookAddress);
 
     const targetPool = new PublicKey(
-        "7iB2y1QMNMsVPsVHjH6xvJSVZGqgNUyfAQB2tWA9wFDy"
+        "FfK6h1FTrcQAw3G7eyUXaVNvUnBPUros4rizGEAzss6e"
     );
 
     // await solanaBot.monitorPairForPriceChange(targetPool, 5, 5, 5);
     // await solanaBot.buyToken(targetPool, 0.01);
     // await solanaBot.monitorPairToSell(targetPool, 10);
     // await new Promise((resolve) => setTimeout(resolve, 5000));
-    // await solanaBot.sellToken(targetPool);
+    await solanaBot.sellToken(targetPool);
 };
 
 main();

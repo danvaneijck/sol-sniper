@@ -70,6 +70,7 @@ class SolanaBot {
     pairPriceMonitoringIntervals: Map<any, any>;
     sellPairPriceMonitoringIntervals: Map<any, any>;
     lastPrices: Map<any, any>;
+    connection2: any;
 
     constructor(
         privateKey: string | undefined,
@@ -102,14 +103,14 @@ class SolanaBot {
             }
         );
 
-        // this.connection = new Connection(
-        //     "https://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
-        //     {
-        //         commitment: "confirmed",
-        //         wsEndpoint:
-        //             "wss://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
-        //     }
-        // );
+        this.connection2 = new Connection(
+            "https://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
+            {
+                commitment: "confirmed",
+                wsEndpoint:
+                    "wss://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
+            }
+        );
 
         this.discordToken = process.env.DISCORD_TOKEN;
         this.discordChannelId = process.env.DISCORD_CHANNEL;
@@ -315,7 +316,7 @@ class SolanaBot {
             const subscriptionId = this.connection.onSignature(
                 txSignature,
                 async (result: { err: null }, context: any) => {
-                    console.log("Transaction signature result:", result);
+                    // console.log("Transaction signature result:", result);
                     if (result.err === null) {
                         console.log("Transaction confirmed!".bg_green);
                         // this.connection.removeSignatureListener(subscriptionId);
@@ -374,7 +375,7 @@ class SolanaBot {
 
             const { innerTransactions } =
                 await Liquidity.makeSwapInstructionSimple({
-                    connection: this.connection,
+                    connection: this.connection2,
                     poolKeys,
                     userKeys: {
                         tokenAccounts: this.walletTokenAccounts,
@@ -388,13 +389,13 @@ class SolanaBot {
 
             return {
                 txids: await buildAndSendTx(
-                    this.connection,
+                    this.connection2,
                     this.wallet,
                     innerTransactions
                 ),
             };
         } catch (e) {
-            console.log(e);
+            console.log("error doing swap");
         }
         return false;
     }
@@ -453,7 +454,7 @@ class SolanaBot {
             });
 
             if (!result) {
-                console.log("swap tx fail", result);
+                // console.log("swap tx fail", result);
             } else {
                 if (result.txids.length > 0) {
                     const tx = result.txids[0];
@@ -512,7 +513,9 @@ class SolanaBot {
                         });
 
                         this.sendMessageToDiscord(
-                            `:gun: Buy success https://solscan.io/tx/${tx} ${this.discordTag}\n` +
+                            `:gun: Buy success ${pair.toBase58()} ${
+                                this.discordTag
+                            }\nhttps://solscan.io/tx/${tx}\n` +
                                 `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount bought: ${(
                                     amountBought /
@@ -642,7 +645,7 @@ class SolanaBot {
             });
 
             if (!result) {
-                console.log("swap tx fail", result);
+                // console.log("swap tx fail", result);
             } else {
                 if (result.txids.length > 0) {
                     const tx = result.txids[0];
@@ -705,7 +708,9 @@ class SolanaBot {
                         });
 
                         this.sendMessageToDiscord(
-                            `:moneybag: Sell success https://solscan.io/tx/${tx} ${this.discordTag}\n` +
+                            `:moneybag: Sell success ${pair.toBase58()} ${
+                                this.discordTag
+                            }\nhttps://solscan.io/tx/${tx}\n` +
                                 `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount sold: ${(
                                     amountSold /
@@ -737,7 +742,7 @@ class SolanaBot {
                     }
                 }
             }
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await new Promise((resolve) => setTimeout(resolve, 100));
             slippage = new Percent(
                 Number(slippage.numerator) + 10,
                 Number(slippage.denominator)
@@ -764,15 +769,17 @@ class SolanaBot {
     }
 
     async decodeSignature(signature: any) {
+        console.log(`attempt get tx ${signature}`.info);
         let retries = 2;
         while (retries > 0) {
             try {
-                const transaction = await this.connection.getTransaction(
+                const transaction = await this.connection2.getTransaction(
                     signature,
                     {
                         maxSupportedTransactionVersion: 0,
                     }
                 );
+                console.log(`success get tx ${signature}`.info);
                 return transaction;
             } catch (error) {
                 retries--;
@@ -916,19 +923,12 @@ class SolanaBot {
         let baseMint = accounts[initMarket.accounts[7]];
         let quoteMint = accounts[initMarket.accounts[8]];
 
-        console.log(`New market: https://solscan.io/tx/${signature}`.bg_yellow);
-
-        console.log(`serumMarket: https://solscan.io/account/${serumMarket}`);
-        console.log(`baseMint: ${baseMint}`);
-        console.log(`quoteMint: ${quoteMint}`);
-
+        console.log(
+            `New market found: https://solscan.io/tx/${signature}`.bg_yellow
+        );
         let marketId = new PublicKey(serumMarket);
         let programId = new PublicKey(this.raydiumLiquidityProgram);
         let poolId = Liquidity.getAssociatedId({ programId, marketId });
-        console.log(`pool id: https://solscan.io/account/${poolId.toBase58()}`);
-        console.log(
-            `dex screener: https://dexscreener.com/solana/${poolId.toBase58()}`
-        );
 
         if (
             quoteMint &&
@@ -947,8 +947,6 @@ class SolanaBot {
         if (!info) {
             this.lookForAddLiquidity(poolId);
         } else {
-            // console.log(JSON.stringify(info, null, 2));
-
             console.log(`status: ${parseInt(info.status, 16)}`);
             const poolOpenTime = moment.unix(parseInt(info.poolOpenTime, 16));
             console.log(info.poolOpenTime, poolOpenTime);
@@ -967,10 +965,6 @@ class SolanaBot {
 
         subId = this.connection.onLogs(pubKey, (result: any) => {
             if (result.err == null) {
-                console.log(
-                    `found tx for pair ${pubKey.toBase58()}`.bg_magenta
-                );
-
                 if (result.logs.length > 100) {
                     this.connection.removeOnLogsListener(subId);
                     console.log(
@@ -1223,7 +1217,7 @@ class SolanaBot {
 
             console.log(`Monitoring stopped for ${pair.toBase58()}.`.bg_yellow);
         } else {
-            console.log(`Pair ${pair.toBase58()} is not being monitored.`.gray);
+            console.log(`Pair ${pair.toBase58()} is not being monitored.`.info);
         }
     }
 
@@ -1306,7 +1300,7 @@ class SolanaBot {
                         });
                     quote = Number(amountOut.toFixed());
                 } catch (e) {
-                    console.log(e);
+                    // console.log(e);
                 }
 
                 let result = null;
@@ -1405,7 +1399,7 @@ class SolanaBot {
                         this.stopMonitoringPairToSell(pair);
                         if (
                             percentageIncrease >=
-                            this.config.profitGoalPercent * 2
+                            this.config.profitGoalPercent * 100 * 2
                         ) {
                             result = await this.sellToken(
                                 pair,
@@ -1439,7 +1433,7 @@ class SolanaBot {
             }, intervalInSeconds * 1000);
 
             this.sellPairPriceMonitoringIntervals.set(
-                pair.contract_addr,
+                pair.toBase58(),
                 monitoringIntervalId
             );
 
@@ -1450,16 +1444,14 @@ class SolanaBot {
     }
 
     stopMonitoringPairToSell(pair: typeof PublicKey) {
-        let pairName = `${pair.toBase58()}`;
-        if (this.sellPairPriceMonitoringIntervals.has(pair.contract_addr)) {
-            clearInterval(
-                this.sellPairPriceMonitoringIntervals.get(pair.contract_addr)
-            );
-            this.sellPairPriceMonitoringIntervals.delete(pair.contract_addr);
+        let pairName = pair.toBase58();
+        if (this.sellPairPriceMonitoringIntervals.has(pairName)) {
+            clearInterval(this.sellPairPriceMonitoringIntervals.get(pairName));
+            this.sellPairPriceMonitoringIntervals.delete(pairName);
 
             console.log(`Monitoring to sell stopped for ${pairName}.`.bg_cyan);
         } else {
-            console.log(`Pair ${pairName} is not being monitored.`.gray);
+            console.log(`Pair ${pairName} is not being monitored.`.info);
         }
     }
 }
