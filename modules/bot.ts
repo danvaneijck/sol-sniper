@@ -1,6 +1,6 @@
 require("dotenv").config();
 const { Connection, Keypair, PublicKey } = require("@solana/web3.js");
-const { TOKEN_PROGRAM_ID } = require("@solana/spl-token");
+// const { TOKEN_PROGRAM_ID } = require("@solana/spl-token");
 const {
     TokenAccount,
     SPL_ACCOUNT_LAYOUT,
@@ -11,6 +11,7 @@ const {
     Percent,
     Token,
     TokenAmount,
+    TOKEN_PROGRAM_ID,
 } = require("@raydium-io/raydium-sdk");
 const BN = require("bn.js");
 const bs58 = require("bs58");
@@ -27,6 +28,7 @@ import { formatAmmKeysById } from "./formatAmmKeysById";
 import { makeTxVersion } from "../config";
 const schedule = require("node-schedule");
 const path = require("path");
+import { Metaplex } from "@metaplex-foundation/js";
 
 type WalletTokenAccounts = Awaited<ReturnType<typeof getWalletTokenAccount>>;
 
@@ -45,7 +47,6 @@ type Position = {
     timeBought: typeof moment;
     profit: string;
     isMoonBag: boolean;
-    pairInstance: any;
 };
 
 class SolanaBot {
@@ -58,8 +59,12 @@ class SolanaBot {
     baseAssetPrice: any;
     tokenPrices: any;
     positions: Map<unknown, Position>;
-    allPairs: Map<unknown, unknown>;
+    allPairs: Map<unknown, any>;
+    pairPriceMonitoringIntervals: Map<any, any>;
+    sellPairPriceMonitoringIntervals: Map<any, any>;
+    lastPrices: Map<any, any>;
     connection: any;
+    connection2: any;
     discordToken: string | undefined;
     discordChannelId: string | undefined;
     discordClient: any;
@@ -67,10 +72,8 @@ class SolanaBot {
     monitoringBasePairIntervalId: undefined | NodeJS.Timeout;
     raydiumLiquidityProgram: string;
     walletTokenAccounts: any;
-    pairPriceMonitoringIntervals: Map<any, any>;
-    sellPairPriceMonitoringIntervals: Map<any, any>;
-    lastPrices: Map<any, any>;
-    connection2: any;
+    openTrades: Set<string>;
+    metaplex: Metaplex;
 
     constructor(
         privateKey: string | undefined,
@@ -112,6 +115,10 @@ class SolanaBot {
             }
         );
 
+        this.metaplex = new Metaplex(this.connection2);
+
+        this.openTrades = new Set();
+
         this.discordToken = process.env.DISCORD_TOKEN;
         this.discordChannelId = process.env.DISCORD_CHANNEL;
 
@@ -144,7 +151,7 @@ class SolanaBot {
         await this.loadFromFile();
         await this.updateBaseAssetPrice();
         this.walletTokenAccounts = await getWalletTokenAccount(
-            this.connection,
+            this.connection2,
             this.wallet.publicKey
         );
     }
@@ -153,7 +160,7 @@ class SolanaBot {
         try {
             this.allPairs = await this.loadMapFromFile<Position>(
                 "pairs.json",
-                "contractAddr"
+                "pairContract"
             );
             this.positions = await this.loadMapFromFile<Position>(
                 "positions.json",
@@ -298,12 +305,35 @@ class SolanaBot {
         if (!info) return;
 
         const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(info.data);
+
+        const poolIdKey = poolId.toBase58();
+        if (this.allPairs.has(poolIdKey)) {
+            const p = this.allPairs.get(poolIdKey);
+            if (p) {
+                this.allPairs.set(poolIdKey, {
+                    ...p,
+                    ...poolState,
+                });
+            }
+        } else {
+            let token =
+                poolState.baseMint.toString() == this.baseAsset
+                    ? poolState.quoteMint
+                    : poolState.baseMint;
+            let tokenInfo = await this.getTokenMetadata(token.toString());
+            this.allPairs.set(poolIdKey, {
+                pairContract: poolIdKey,
+                tokenInfo: tokenInfo,
+                ...poolState,
+            });
+        }
+
         return poolState;
     }
 
     async updateTokenAccounts() {
         this.walletTokenAccounts = await getWalletTokenAccount(
-            this.connection,
+            this.connection2,
             this.wallet.publicKey
         );
     }
@@ -395,47 +425,60 @@ class SolanaBot {
                 ),
             };
         } catch (e) {
-            console.log("error doing swap");
+            console.log("error doing swap", e);
         }
         return false;
     }
 
     async buyToken(pair: typeof PublicKey, amount: number) {
+        if (this.openTrades.size >= this.config.maxTrades) {
+            console.log(
+                `max amount of trades reached ${this.config.maxTrades}`.bg_red
+            );
+            return;
+        }
         console.log(
             `${moment().format(
                 "hh:mm:ss"
             )} attempt buy ${amount} SOL from pair ${pair.toBase58()}`
                 .bg_magenta
         );
-        const pairInstance = await this.getPoolInfo(pair);
+        let pairInfo;
+        if (this.allPairs.has(pair.toBase58())) {
+            pairInfo = this.allPairs.get(pair.toBase58());
+        }
+        if (!pairInfo) {
+            pairInfo = await this.getPoolInfo(pair);
+        }
+        if (!pairInfo) return;
 
         const output =
-            pairInstance.baseMint == this.baseAsset
-                ? pairInstance.quoteMint
-                : pairInstance.baseMint;
+            pairInfo.baseMint == this.baseAsset
+                ? pairInfo.quoteMint
+                : pairInfo.baseMint;
         const input =
-            pairInstance.baseMint == this.baseAsset
-                ? pairInstance.baseMint
-                : pairInstance.quoteMint;
+            pairInfo.baseMint == this.baseAsset
+                ? pairInfo.baseMint
+                : pairInfo.quoteMint;
         const inputDecimals =
-            pairInstance.baseMint == this.baseAsset
-                ? parseInt(pairInstance.baseDecimal)
-                : parseInt(pairInstance.quoteDecimal);
+            pairInfo.baseMint == this.baseAsset
+                ? parseInt(pairInfo.baseDecimal)
+                : parseInt(pairInfo.quoteDecimal);
         const outputDecimals =
-            pairInstance.baseMint == this.baseAsset
-                ? parseInt(pairInstance.quoteDecimal)
-                : parseInt(pairInstance.baseDecimal);
+            pairInfo.baseMint == this.baseAsset
+                ? parseInt(pairInfo.quoteDecimal)
+                : parseInt(pairInfo.baseDecimal);
 
         const inputToken = new Token(
             TOKEN_PROGRAM_ID,
-            new PublicKey(input),
+            new PublicKey(input.toString()),
             inputDecimals,
             "WSOL",
             "WSOL"
         );
         const outputToken = new Token(
             TOKEN_PROGRAM_ID,
-            new PublicKey(output),
+            new PublicKey(output.toString()),
             outputDecimals
         );
 
@@ -443,7 +486,7 @@ class SolanaBot {
             inputToken,
             amount * Math.pow(10, inputDecimals)
         );
-        let slippage = new Percent(20, 100);
+        let slippage = new Percent(30, 100);
 
         for (let i = 0; i < 3; i++) {
             const result = await this.swap({
@@ -461,8 +504,8 @@ class SolanaBot {
                     const confirmed = await this.checkConfirmation(tx);
                     if (confirmed === true) {
                         console.log("tx success");
-
                         let txInfo = await this.decodeSignature(tx);
+                        if (!txInfo) return;
                         let preBalance = txInfo.meta.preTokenBalances.find(
                             (x: { mint: any; owner: any }) =>
                                 x.mint == output &&
@@ -509,13 +552,12 @@ class SolanaBot {
                             timeBought: moment(),
                             profit: profit.toString(),
                             isMoonBag: false,
-                            pairInstance: pairInstance,
                         });
 
+                        this.openTrades.add(pair.toBase58());
+
                         this.sendMessageToDiscord(
-                            `:gun: Buy success ${pair.toBase58()} ${
-                                this.discordTag
-                            }\nhttps://solscan.io/tx/${tx}\n` +
+                            `:gun: Buy success ${pairInfo.tokenInfo.json.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
                                 `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount bought: ${(
                                     amountBought /
@@ -539,9 +581,9 @@ class SolanaBot {
                     }
                 }
             }
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+            // await new Promise((resolve) => setTimeout(resolve, 100));
             slippage = new Percent(
-                Number(slippage.numerator) + 5,
+                Number(slippage.numerator) + 10,
                 Number(slippage.denominator)
             );
         }
@@ -560,27 +602,28 @@ class SolanaBot {
 
         let position = this.positions.get(pair.toBase58());
 
-        let pairInstance;
-        if (position) {
-            pairInstance = position.pairInstance;
-        } else {
-            console.log("get fresh pair instance");
-            pairInstance = await this.getPoolInfo(pair);
+        let pairInfo;
+        if (this.allPairs.has(pair.toBase58())) {
+            pairInfo = this.allPairs.get(pair.toBase58());
         }
+        if (!pairInfo) {
+            pairInfo = await this.getPoolInfo(pair);
+        }
+        if (!pairInfo) return;
 
         const baseMint =
-            pairInstance.baseMint == this.baseAsset
-                ? pairInstance.baseMint
-                : pairInstance.quoteMint;
+            pairInfo.baseMint == this.baseAsset
+                ? pairInfo.baseMint
+                : pairInfo.quoteMint;
         const nonBaseMint =
-            pairInstance.baseMint == this.baseAsset
-                ? pairInstance.quoteMint
-                : pairInstance.baseMint;
+            pairInfo.baseMint == this.baseAsset
+                ? pairInfo.quoteMint
+                : pairInfo.baseMint;
 
         const nonBaseDecimals =
-            pairInstance.baseMint == this.baseAsset
-                ? parseInt(pairInstance.quoteDecimal)
-                : parseInt(pairInstance.baseDecimal);
+            pairInfo.baseMint == this.baseAsset
+                ? parseInt(pairInfo.quoteDecimal)
+                : parseInt(pairInfo.baseDecimal);
 
         const nonBaseToken = new Token(
             TOKEN_PROGRAM_ID,
@@ -652,6 +695,7 @@ class SolanaBot {
                     const confirmed = await this.checkConfirmation(tx);
                     if (confirmed === true) {
                         let txInfo = await this.decodeSignature(tx);
+                        if (!txInfo) return;
                         let preBalance = txInfo.meta.preTokenBalances.find(
                             (x: { mint: any; owner: any }) =>
                                 x.mint == nonBaseMint &&
@@ -695,7 +739,6 @@ class SolanaBot {
 
                         this.positions.set(pair.toBase58(), {
                             pairContract: position?.pairContract || "",
-                            pairInstance: position?.pairInstance || "",
                             tokenContract: position?.tokenContract || "",
                             timeBought: position?.timeBought || moment(),
                             amountIn: updatedAmountIn.toString(),
@@ -707,10 +750,10 @@ class SolanaBot {
                                 updatedBalance > 0 && updatedAmountIn == 0,
                         });
 
+                        this.openTrades.delete(pair.toBase58());
+
                         this.sendMessageToDiscord(
-                            `:moneybag: Sell success ${pair.toBase58()} ${
-                                this.discordTag
-                            }\nhttps://solscan.io/tx/${tx}\n` +
+                            `:moneybag: Sell success ${pairInfo.tokenInfo.json.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
                                 `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount sold: ${(
                                     amountSold /
@@ -769,7 +812,7 @@ class SolanaBot {
     }
 
     async decodeSignature(signature: any) {
-        console.log(`attempt get tx ${signature}`.info);
+        // console.log(`attempt get tx ${signature}`.info);
         let retries = 2;
         while (retries > 0) {
             try {
@@ -779,7 +822,7 @@ class SolanaBot {
                         maxSupportedTransactionVersion: 0,
                     }
                 );
-                console.log(`success get tx ${signature}`.info);
+                // console.log(`success get tx ${signature}`.info);
                 return transaction;
             } catch (error) {
                 retries--;
@@ -812,37 +855,50 @@ class SolanaBot {
         }
         let walletAddLiquidity = addresses[ido.accountKeyIndexes[17]];
         let lpDestination = addresses[ido.accountKeyIndexes[20]];
-        console.log(
-            `address who added liquidity: ${walletAddLiquidity.toBase58()}`
-        );
-        console.log(`lp holder: ${lpDestination.toBase58()}`);
+        // console.log(
+        //     `address who added liquidity: ${walletAddLiquidity.toBase58()}`
+        // );
+        // console.log(`lp holder: ${lpDestination.toBase58()}`);
 
-        let info = await this.getPoolInfo(pair);
-        const baseDecimal = 10 ** info.baseDecimal.toNumber();
-        const quoteDecimal = 10 ** info.quoteDecimal.toNumber();
+        await this.getPoolInfo(pair);
+        const pairInfo = this.allPairs.get(pair.toBase58());
+        if (!pairInfo) return;
 
         const baseTokenAmount = await this.connection.getTokenAccountBalance(
-            info.baseVault
+            new PublicKey(pairInfo.baseVault.toString())
         );
         const quoteTokenAmount = await this.connection.getTokenAccountBalance(
-            info.quoteVault
+            new PublicKey(pairInfo.quoteVault.toString())
         );
 
-        const basePnl = info.baseNeedTakePnl.toNumber() / baseDecimal;
-        const quotePnl = info.quoteNeedTakePnl.toNumber() / quoteDecimal;
+        const base = baseTokenAmount.value?.uiAmount || 0;
+        const quote = quoteTokenAmount.value?.uiAmount || 0;
 
-        const base = (baseTokenAmount.value?.uiAmount || 0) - basePnl;
-        const quote = (quoteTokenAmount.value?.uiAmount || 0) - quotePnl;
-
-        let baseAssetAmount = info.baseMint == this.baseAsset ? base : quote;
+        let baseAssetAmount =
+            pairInfo.baseMint == this.baseAsset ? base : quote;
 
         const liquidity = this.baseAssetPrice * baseAssetAmount * 2;
 
-        const poolOpenTime = moment.unix(Number(info["poolOpenTime"]));
+        const poolOpenTime = moment.unix(Number(pairInfo["poolOpenTime"]));
 
-        const baseMintIsBaseAsset = info.baseMint === this.baseAsset;
+        const baseMintIsBaseAsset = pairInfo.baseMint === this.baseAsset;
 
         const price = baseMintIsBaseAsset ? base / quote : quote / base;
+
+        const pairKey = pair.toBase58();
+        if (this.allPairs.has(pairKey)) {
+            const p = this.allPairs.get(pairKey);
+            if (p) {
+                this.allPairs.set(pairKey, {
+                    ...p,
+                    liquidityAdded: liquidity,
+                    liquidityAddedTime: moment(),
+                    liquidityAddTx: signature,
+                    walletAddLiquidity: walletAddLiquidity,
+                    lpHolder: lpDestination,
+                });
+            }
+        }
 
         console.log(
             `${moment().format(
@@ -860,7 +916,11 @@ class SolanaBot {
             poolOpenTime > moment().subtract(10, "minute")
         ) {
             this.sendMessageToDiscord(
-                `:new: Pair found with liquidity: $${liquidity.toFixed(
+                `:new: ${pairInfo.tokenInfo.json.name} ${
+                    pairInfo.tokenInfo.json.symbol
+                } / SOL\n${
+                    pairInfo.tokenInfo.json.description
+                }\nliquidity: $${liquidity.toFixed(
                     2
                 )}\nopen time: <t:${poolOpenTime.unix()}:R>\nprice: ${price} SOL ($${
                     price ? (price * this.baseAssetPrice).toFixed(10) : 0
@@ -875,28 +935,44 @@ class SolanaBot {
             liquidity < this.config.upperLiquidityBound &&
             liquidity > this.config.lowerLiquidityBound &&
             poolOpenTime < moment() &&
-            poolOpenTime > moment().subtract(20, "seconds")
+            poolOpenTime > moment().subtract(30, "seconds")
         ) {
-            await this.buyToken(pair, this.config.snipeAmount);
+            if (!this.config.live) {
+                await this.monitorPairForPriceChange(pair, 10, 5, 10);
+            } else {
+                await this.buyToken(pair, this.config.snipeAmount);
+            }
         } else if (
             liquidity < this.config.upperLiquidityBound &&
             liquidity > this.config.lowerLiquidityBound &&
             poolOpenTime > moment() &&
-            poolOpenTime < moment().add(10, "minute")
+            poolOpenTime < moment().add(30, "minute")
         ) {
             console.log(
                 `adding job to buy token at ${poolOpenTime}`.bg_magenta
             );
-            let scheduledDate = poolOpenTime.subtract(3, "second").toDate();
+            let scheduledDate = poolOpenTime.subtract(1, "second").toDate();
             const job = schedule.scheduleJob(scheduledDate, async () => {
-                console.log("trigger job");
+                // console.log("trigger job");
                 try {
-                    await this.buyToken(pair, this.config.snipeAmount);
+                    if (!this.config.live) {
+                        await this.monitorPairForPriceChange(pair, 10, 5, 10);
+                    } else {
+                        await this.buyToken(pair, this.config.snipeAmount);
+                    }
                 } catch (error) {
                     console.error("Error scheduling buy operation:", error);
                 }
             });
         }
+    }
+
+    async getTokenMetadata(tokenAddress: string) {
+        const tokenMint = new PublicKey(tokenAddress);
+        let metadata = await this.metaplex
+            .nfts()
+            .findByMint({ mintAddress: tokenMint });
+        return metadata;
     }
 
     async handleNewMarket(signature: string) {
@@ -912,6 +988,7 @@ class SolanaBot {
             return;
         }
         let initMarket = instructions[5];
+        if (!initMarket.accounts) return;
 
         let serumMarket = accounts[initMarket.accounts[0]];
         let serumRequestQueue = accounts[initMarket.accounts[1]];
@@ -924,12 +1001,13 @@ class SolanaBot {
         let quoteMint = accounts[initMarket.accounts[8]];
 
         console.log(
-            `New market found: https://solscan.io/tx/${signature}`.bg_yellow
+            `New market found: https://solscan.io/tx/${signature}`.bg_blue
         );
         let marketId = new PublicKey(serumMarket);
         let programId = new PublicKey(this.raydiumLiquidityProgram);
         let poolId = Liquidity.getAssociatedId({ programId, marketId });
 
+        if (!baseMint || !quoteMint) return;
         if (
             quoteMint &&
             quoteMint.toString() !== this.baseAsset &&
@@ -943,7 +1021,17 @@ class SolanaBot {
             return;
         }
 
+        let token =
+            baseMint.toString() == this.baseAsset ? quoteMint : baseMint;
+        let tokenInfo = await this.getTokenMetadata(token.toString());
+
+        this.allPairs.set(poolId.toBase58(), {
+            tokenInfo: tokenInfo,
+            pairContract: poolId.toBase58(),
+        });
+
         let info = await this.getPoolInfo(poolId);
+
         if (!info) {
             this.lookForAddLiquidity(poolId);
         } else {
@@ -958,9 +1046,8 @@ class SolanaBot {
     }
 
     async lookForAddLiquidity(pubKey: typeof PublicKey) {
-        console.log(
-            `start watching ${pubKey.toBase58()} for liquidity tx`.bg_cyan
-        );
+        let name = this.allPairs.get(pubKey.toBase58()).tokenInfo.json.symbol;
+        console.log(`start watching ${name} for liquidity tx`.bg_cyan);
         let subId: any;
 
         subId = this.connection.onLogs(pubKey, (result: any) => {
@@ -968,8 +1055,7 @@ class SolanaBot {
                 if (result.logs.length > 100) {
                     this.connection.removeOnLogsListener(subId);
                     console.log(
-                        `stop watching ${pubKey.toBase58()} for liquidity tx`
-                            .bg_red
+                        `stop watching ${name} for liquidity tx`.bg_red
                     );
 
                     this.handleNewLiquidity(result.signature, pubKey);
@@ -1034,42 +1120,42 @@ class SolanaBot {
                     targetPoolInfo
                 ) as typeof LiquidityPoolKeys;
 
-                let position = this.positions.get(pair.toBase58());
-
-                let pairInstance;
-                if (position) {
-                    pairInstance = position.pairInstance;
-                } else {
-                    pairInstance = await this.getPoolInfo(pair);
+                let pairInfo;
+                if (this.allPairs.has(pair.toBase58())) {
+                    pairInfo = this.allPairs.get(pair.toBase58());
                 }
+                if (!pairInfo) {
+                    pairInfo = await this.getPoolInfo(pair);
+                }
+                if (!pairInfo) return;
 
                 const output =
-                    pairInstance.baseMint == this.baseAsset
-                        ? pairInstance.quoteMint
-                        : pairInstance.baseMint;
+                    pairInfo.baseMint == this.baseAsset
+                        ? pairInfo.quoteMint
+                        : pairInfo.baseMint;
                 const input =
-                    pairInstance.baseMint == this.baseAsset
-                        ? pairInstance.baseMint
-                        : pairInstance.quoteMint;
+                    pairInfo.baseMint == this.baseAsset
+                        ? pairInfo.baseMint
+                        : pairInfo.quoteMint;
                 const inputDecimals =
-                    pairInstance.baseMint == this.baseAsset
-                        ? parseInt(pairInstance.baseDecimal)
-                        : parseInt(pairInstance.quoteDecimal);
+                    pairInfo.baseMint == this.baseAsset
+                        ? parseInt(pairInfo.baseDecimal)
+                        : parseInt(pairInfo.quoteDecimal);
                 const outputDecimals =
-                    pairInstance.baseMint == this.baseAsset
-                        ? parseInt(pairInstance.quoteDecimal)
-                        : parseInt(pairInstance.baseDecimal);
+                    pairInfo.baseMint == this.baseAsset
+                        ? parseInt(pairInfo.quoteDecimal)
+                        : parseInt(pairInfo.baseDecimal);
 
                 const inputToken = new Token(
                     TOKEN_PROGRAM_ID,
-                    new PublicKey(input),
+                    new PublicKey(input.toString()),
                     inputDecimals,
                     "WSOL",
                     "WSOL"
                 );
                 const outputToken = new Token(
                     TOKEN_PROGRAM_ID,
-                    new PublicKey(output),
+                    new PublicKey(output.toString()),
                     outputDecimals
                 );
 
@@ -1078,7 +1164,7 @@ class SolanaBot {
                     1 * Math.pow(10, inputDecimals)
                 );
 
-                let slippage = new Percent(2, 100);
+                let slippage = new Percent(10, 100);
 
                 try {
                     let { amountOut, minAmountOut } =
@@ -1111,37 +1197,25 @@ class SolanaBot {
                         ((currentPrice - newLowestPrice) / newLowestPrice) *
                         100;
 
-                    const baseDecimal =
-                        10 ** pairInstance.baseDecimal.toNumber();
-                    const quoteDecimal =
-                        10 ** pairInstance.quoteDecimal.toNumber();
-
                     const baseTokenAmount =
                         await this.connection.getTokenAccountBalance(
-                            pairInstance.baseVault
+                            new PublicKey(pairInfo.baseVault.toString())
                         );
                     const quoteTokenAmount =
                         await this.connection.getTokenAccountBalance(
-                            pairInstance.quoteVault
+                            new PublicKey(pairInfo.quoteVault.toString())
                         );
 
-                    const basePnl =
-                        pairInstance.baseNeedTakePnl.toNumber() / baseDecimal;
-                    const quotePnl =
-                        pairInstance.quoteNeedTakePnl.toNumber() / quoteDecimal;
-
-                    const base =
-                        (baseTokenAmount.value?.uiAmount || 0) - basePnl;
-                    const quote =
-                        (quoteTokenAmount.value?.uiAmount || 0) - quotePnl;
+                    const base = baseTokenAmount.value?.uiAmount || 0;
+                    const quote = quoteTokenAmount.value?.uiAmount || 0;
 
                     let baseAssetAmount =
-                        pairInstance.baseMint == this.baseAsset ? base : quote;
+                        pairInfo.baseMint == this.baseAsset ? base : quote;
 
                     const liquidity = this.baseAssetPrice * baseAssetAmount * 2;
 
                     if (liquidity < 1) {
-                        let message = `:small_red_triangle_down: ${pair.toBase58()} rugged!`;
+                        let message = `:small_red_triangle_down: ${pairInfo.tokenInfo.json.symbol} rugged!`;
                         this.sendMessageToDiscord(message);
                     } else {
                         if (
@@ -1149,7 +1223,9 @@ class SolanaBot {
                             priceChangeThreshold
                         ) {
                             let message =
-                                `:small_red_triangle_down: ${pair.toBase58()} Price is down ${parseFloat(
+                                `:small_red_triangle_down: ${
+                                    pairInfo.tokenInfo.json.symbol
+                                } Price is down ${parseFloat(
                                     priceChangeToHighest.toString()
                                 ).toFixed(2)}% in the last ` +
                                 `${trackingDurationMinutes} minutes. current: $${parseFloat(
@@ -1165,7 +1241,9 @@ class SolanaBot {
 
                         if (priceChangeToLowest > priceChangeThreshold) {
                             let message =
-                                `:green_circle: ${pair.toBase58()} price is up ${parseFloat(
+                                `:green_circle: ${
+                                    pairInfo.tokenInfo.json.symbol
+                                } price is up ${parseFloat(
                                     priceChangeToLowest.toString()
                                 ).toFixed(2)}% in the last ` +
                                 `${trackingDurationMinutes} minutes. current: $${parseFloat(
@@ -1189,6 +1267,17 @@ class SolanaBot {
 
                     if (currentPrice == Infinity || liquidity < 1) {
                         this.stopMonitoringPairForPriceChange(pair);
+
+                        const pairKey = pair.toBase58();
+                        if (this.allPairs.has(pairKey)) {
+                            const p = this.allPairs.get(pairKey);
+                            if (p) {
+                                this.allPairs.set(pairKey, {
+                                    ...p,
+                                    liquidityRugged: liquidity,
+                                });
+                            }
+                        }
                     }
                 } catch (e) {
                     console.log(e);
@@ -1223,11 +1312,9 @@ class SolanaBot {
 
     async monitorPairToSell(pair: typeof PublicKey, intervalInSeconds: number) {
         try {
-            let pairName = `${pair.toBase58()}`;
-
-            if (this.sellPairPriceMonitoringIntervals.has(pairName)) {
+            if (this.sellPairPriceMonitoringIntervals.has(pair.toBase58())) {
                 console.log(
-                    `Pair ${pairName} is already being monitored to sell.`
+                    `Pair ${pair.toBase58()} is already being monitored to sell.`
                 );
                 return;
             }
@@ -1237,7 +1324,16 @@ class SolanaBot {
 
                 if (!position) return;
 
-                let pairInstance = position.pairInstance;
+                let pairInfo;
+                if (this.allPairs.has(pair.toBase58())) {
+                    pairInfo = this.allPairs.get(pair.toBase58());
+                }
+                if (!pairInfo) {
+                    pairInfo = await this.getPoolInfo(pair);
+                }
+                if (!pairInfo) return;
+
+                let pairName = `${pairInfo.tokenInfo.json.symbol}`;
 
                 const targetPoolInfo = await formatAmmKeysById(
                     this.connection,
@@ -1249,18 +1345,18 @@ class SolanaBot {
                 ) as typeof LiquidityPoolKeys;
 
                 const baseMint =
-                    pairInstance.baseMint == this.baseAsset
-                        ? pairInstance.baseMint
-                        : pairInstance.quoteMint;
+                    pairInfo.baseMint == this.baseAsset
+                        ? pairInfo.baseMint
+                        : pairInfo.quoteMint;
                 const nonBaseMint =
-                    pairInstance.baseMint == this.baseAsset
-                        ? pairInstance.quoteMint
-                        : pairInstance.baseMint;
+                    pairInfo.baseMint == this.baseAsset
+                        ? pairInfo.quoteMint
+                        : pairInfo.baseMint;
 
                 const nonBaseDecimals =
-                    pairInstance.baseMint == this.baseAsset
-                        ? parseInt(pairInstance.quoteDecimal)
-                        : parseInt(pairInstance.baseDecimal);
+                    pairInfo.baseMint == this.baseAsset
+                        ? parseInt(pairInfo.quoteDecimal)
+                        : parseInt(pairInfo.baseDecimal);
 
                 const nonBaseToken = new Token(
                     TOKEN_PROGRAM_ID,
@@ -1272,7 +1368,7 @@ class SolanaBot {
 
                 const inputTokenAmount = new TokenAmount(
                     nonBaseToken,
-                    Number(position.balance)
+                    position.balance
                 );
 
                 const outputToken = new Token(
@@ -1437,7 +1533,9 @@ class SolanaBot {
                 monitoringIntervalId
             );
 
-            console.log(`Sell - Monitoring started for ${pairName}.`.bg_cyan);
+            console.log(
+                `Sell - Monitoring started for ${pair.toBase58()}.`.bg_cyan
+            );
         } catch (error) {
             console.error("Error monitoring pair:", error);
         }
