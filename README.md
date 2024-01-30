@@ -4,4 +4,4 @@ trading memes on solana
 
 `nvm use 20`
 `yarn`
-`ts-node ./bot.ts`
+`ts-node ./main.ts`

@@ -15,7 +15,7 @@ const main = async () => {
         stopLoss: 0.6, // %
         tradeTimeLimit: 5, // minutes
         lowerLiquidityBound: 400, // USD
-        upperLiquidityBound: 15000, // USD
+        upperLiquidityBound: 30000, // USD
     };
 
     const solanaBot = new SolanaBot(privateKey, config);
@@ -27,11 +27,13 @@ const main = async () => {
     await solanaBot.scanForNewPairs(openBookAddress);
 
     const targetPool = new PublicKey(
-        "AjpLQGsXxMBCvG3dmRuJWWUP4ysQExcRVmeFdnjFBEDu"
+        "2nrJfXnFEGEsK9HHKjQwc4VHH3jUUcvLC6gBCVX3QStY"
     );
 
-    // await solanaBot.monitorPairForPriceChange(targetPool, 5, 5, 5);
+    // await solanaBot.getPoolInfo(targetPool);
+    // await solanaBot.lookForRemoveLiquidity(targetPool);
 
+    // await solanaBot.monitorPairForPriceChange(targetPool, 5, 5, 5);
     // await solanaBot.buyToken(targetPool, 0.01);
     // await solanaBot.monitorPairToSell(targetPool, 10);
     // await new Promise((resolve) => setTimeout(resolve, 5000));

@@ -1,6 +1,5 @@
 require("dotenv").config();
 const { Connection, Keypair, PublicKey } = require("@solana/web3.js");
-// const { TOKEN_PROGRAM_ID } = require("@solana/spl-token");
 const {
     TokenAccount,
     SPL_ACCOUNT_LAYOUT,
@@ -284,9 +283,12 @@ class SolanaBot {
     }
 
     async getTokenAccounts(owner: typeof PublicKey) {
-        const tokenResp = await this.connection.getTokenAccountsByOwner(owner, {
-            programId: TOKEN_PROGRAM_ID,
-        });
+        const tokenResp = await this.connection2.getTokenAccountsByOwner(
+            owner,
+            {
+                programId: TOKEN_PROGRAM_ID,
+            }
+        );
 
         const accounts: (typeof TokenAccount)[] = [];
         for (const { pubkey, account } of tokenResp.value) {
@@ -301,7 +303,7 @@ class SolanaBot {
     }
 
     async getPoolInfo(poolId: typeof PublicKey) {
-        const info = await this.connection.getAccountInfo(poolId);
+        const info = await this.connection2.getAccountInfo(poolId);
         if (!info) return;
 
         const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(info.data);
@@ -343,13 +345,13 @@ class SolanaBot {
             `waiting for tx to confirm... https://solscan.io/tx/${txSignature}`
         );
         return new Promise<boolean>((resolve, reject) => {
-            const subscriptionId = this.connection.onSignature(
+            const subscriptionId = this.connection2.onSignature(
                 txSignature,
                 async (result: { err: null }, context: any) => {
                     // console.log("Transaction signature result:", result);
                     if (result.err === null) {
                         console.log("Transaction confirmed!".bg_green);
-                        // this.connection.removeSignatureListener(subscriptionId);
+                        // this.connection2.removeSignatureListener(subscriptionId);
                         resolve(true);
                     } else {
                         resolve(false);
@@ -358,13 +360,15 @@ class SolanaBot {
                 "confirmed"
             );
 
-            this.connection
+            this.connection2
                 .getSignatureStatuses([txSignature])
                 .then((status: any) => {
                     const signatureStatus = status.value[0];
                     if (signatureStatus?.confirmations > 0) {
                         console.log("Transaction already confirmed!");
-                        this.connection.removeSignatureListener(subscriptionId);
+                        this.connection2.removeSignatureListener(
+                            subscriptionId
+                        );
                         resolve(true);
                     }
                 })
@@ -378,7 +382,7 @@ class SolanaBot {
     async swap(input: SwapTxInput) {
         try {
             const targetPoolInfo = await formatAmmKeysById(
-                this.connection,
+                this.connection2,
                 input.targetPool
             );
             assert(targetPoolInfo, "cannot find the target pool");
@@ -389,7 +393,7 @@ class SolanaBot {
             let { amountOut, minAmountOut } = Liquidity.computeAmountOut({
                 poolKeys: poolKeys,
                 poolInfo: await Liquidity.fetchInfo({
-                    connection: this.connection,
+                    connection: this.connection2,
                     poolKeys,
                 }),
                 amountIn: input.inputTokenAmount,
@@ -799,7 +803,7 @@ class SolanaBot {
 
         try {
             const signatures =
-                await this.connection.getConfirmedSignaturesForAddress2(
+                await this.connection2.getConfirmedSignaturesForAddress2(
                     publicKey
                 );
             for (const sig of signatures) {
@@ -853,6 +857,8 @@ class SolanaBot {
             console.log("did not find ido message logs");
             return;
         }
+        const addedTime = moment.unix(tx.blockTime);
+
         let walletAddLiquidity = addresses[ido.accountKeyIndexes[17]];
         let lpDestination = addresses[ido.accountKeyIndexes[20]];
         // console.log(
@@ -864,10 +870,10 @@ class SolanaBot {
         const pairInfo = this.allPairs.get(pair.toBase58());
         if (!pairInfo) return;
 
-        const baseTokenAmount = await this.connection.getTokenAccountBalance(
+        const baseTokenAmount = await this.connection2.getTokenAccountBalance(
             new PublicKey(pairInfo.baseVault.toString())
         );
-        const quoteTokenAmount = await this.connection.getTokenAccountBalance(
+        const quoteTokenAmount = await this.connection2.getTokenAccountBalance(
             new PublicKey(pairInfo.quoteVault.toString())
         );
 
@@ -892,10 +898,11 @@ class SolanaBot {
                 this.allPairs.set(pairKey, {
                     ...p,
                     liquidityAdded: liquidity,
-                    liquidityAddedTime: moment(),
+                    liquidityAddedTime: addedTime,
                     liquidityAddTx: signature,
                     walletAddLiquidity: walletAddLiquidity,
                     lpHolder: lpDestination,
+                    baseMintAdded: baseMintIsBaseAsset ? base : quote,
                 });
             }
         }
@@ -925,10 +932,10 @@ class SolanaBot {
                 )}\nopen time: <t:${poolOpenTime.unix()}:R>\nprice: ${price} SOL ($${
                     price ? (price * this.baseAssetPrice).toFixed(10) : 0
                 })\n` +
-                    `lp adder: https://solscan.io/account/${walletAddLiquidity.toBase58()}\n` +
-                    `lp holder: https://solscan.io/account/${lpDestination.toBase58()}\n` +
-                    `chart: https://dexscreener.com/solana/${pair.toBase58()}\n` +
-                    `add liq tx: https://solscan.io/tx/${signature}`
+                    // `lp adder: https://solscan.io/account/${walletAddLiquidity.toBase58()}\n` +
+                    // `lp holder: https://solscan.io/account/${lpDestination.toBase58()}\n` +
+                    `chart: https://dexscreener.com/solana/${pair.toBase58()}\n`
+                // `add liq tx: https://solscan.io/tx/${signature}`
             );
         }
         if (
@@ -939,6 +946,7 @@ class SolanaBot {
         ) {
             if (!this.config.live) {
                 await this.monitorPairForPriceChange(pair, 10, 5, 10);
+                await this.lookForRemoveLiquidity(pair);
             } else {
                 await this.buyToken(pair, this.config.snipeAmount);
             }
@@ -957,6 +965,7 @@ class SolanaBot {
                 try {
                     if (!this.config.live) {
                         await this.monitorPairForPriceChange(pair, 10, 5, 10);
+                        await this.lookForRemoveLiquidity(pair);
                     } else {
                         await this.buyToken(pair, this.config.snipeAmount);
                     }
@@ -968,11 +977,22 @@ class SolanaBot {
     }
 
     async getTokenMetadata(tokenAddress: string) {
-        const tokenMint = new PublicKey(tokenAddress);
-        let metadata = await this.metaplex
-            .nfts()
-            .findByMint({ mintAddress: tokenMint });
-        return metadata;
+        try {
+            const tokenMint = new PublicKey(tokenAddress);
+            let metadata = await this.metaplex
+                .nfts()
+                .findByMint({ mintAddress: tokenMint });
+
+            return metadata;
+        } catch (e) {
+            return {
+                json: {
+                    symbol: "UNKNOWN",
+                    name: "UNKNOWN",
+                    description: "",
+                },
+            };
+        }
     }
 
     async handleNewMarket(signature: string) {
@@ -988,7 +1008,7 @@ class SolanaBot {
             return;
         }
         let initMarket = instructions[5];
-        if (!initMarket.accounts) return;
+        if (!initMarket || !initMarket.accounts) return;
 
         let serumMarket = accounts[initMarket.accounts[0]];
         let serumRequestQueue = accounts[initMarket.accounts[1]];
@@ -1064,6 +1084,108 @@ class SolanaBot {
         });
     }
 
+    async handleRemoveLiquidity(signature: string, pair: typeof PublicKey) {
+        let tx = await this.decodeSignature(signature);
+        if (!tx) return;
+
+        let addresses = tx.transaction.message.staticAccountKeys;
+        let instructions = tx.meta.innerInstructions;
+        if (!instructions) return;
+
+        let preBalance = tx.meta.preBalances[0];
+        let postBalance = tx.meta.postBalances[0];
+
+        let baseAmountGained = parseInt(postBalance) - parseInt(preBalance);
+
+        console.log(
+            `SOL RUGGED: ${(baseAmountGained / Math.pow(10, 9)).toFixed(5)}`
+        );
+
+        const timeRemoved = moment.unix(tx.blockTime);
+
+        const pairKey = pair.pairContract;
+        let profit = 0;
+        if (this.allPairs.has(pairKey)) {
+            const p = this.allPairs.get(pairKey);
+            if (p) {
+                this.allPairs.set(pairKey, {
+                    ...p,
+                    baseMintRemoved: baseAmountGained / Math.pow(10, 9),
+                    rugProfit:
+                        baseAmountGained / Math.pow(10, 9) - p.baseMintAdded,
+                    liquidityRemovedTime: timeRemoved,
+                    liquidityRugged:
+                        (baseAmountGained / Math.pow(10, 9)) *
+                        this.baseAssetPrice *
+                        2,
+                    liquidityRemoveTx: signature,
+                });
+                profit = baseAmountGained / Math.pow(10, 9) - p.baseMintAdded;
+                const duration = moment.duration(
+                    timeRemoved.diff(moment(p.liquidityAddedTime))
+                );
+
+                let formattedDuration = "";
+                if (duration.hours() !== 0) {
+                    formattedDuration += `${duration.hours()} hours `;
+                }
+                formattedDuration += `${duration.minutes()} minutes ${duration.seconds()} seconds`;
+
+                this.sendMessageToDiscord(
+                    `:red_square: ${pair.tokenInfo.json.symbol} rugged ${(
+                        baseAmountGained / Math.pow(10, 9)
+                    ).toFixed(5)} SOL (+${profit.toFixed(3)} SOL $${(
+                        profit * this.baseAssetPrice
+                    ).toFixed(2)})\n` +
+                        `traded for ${formattedDuration}\n` +
+                        `remove liq tx: https://solscan.io/tx/${signature}`
+                );
+            }
+        }
+    }
+
+    async lookForRemoveLiquidity(pubKey: typeof PublicKey) {
+        let pair = this.allPairs.get(pubKey.toBase58());
+        let name = pair.tokenInfo.json.symbol;
+
+        console.log(`start watching ${name} for remove liquidity tx`.bg_cyan);
+        let subId: any;
+
+        subId = this.connection.onLogs(pubKey, (result: any) => {
+            if (result.err == null) {
+                let foundCandidate = false;
+
+                if (
+                    result.logs.find((x: string) =>
+                        x.includes(
+                            "Program 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 invoke [1]"
+                        )
+                    ) &&
+                    result.logs.find((x: string) =>
+                        x.includes("Program log: calc_exact len:0")
+                    ) &&
+                    result.logs.find((x: string) =>
+                        x.includes("Program log: Instruction: Transfer")
+                    ) &&
+                    result.logs.find((x: string) =>
+                        x.includes("Program log: Instruction: Burn")
+                    ) &&
+                    result.logs.find((x: string) =>
+                        x.includes("Program log: Instruction: CloseAccount")
+                    )
+                ) {
+                    foundCandidate = true;
+                    console.log("remove liquidity");
+                    this.connection.removeOnLogsListener(subId);
+                }
+
+                if (foundCandidate) {
+                    this.handleRemoveLiquidity(result.signature, pair);
+                }
+            }
+        });
+    }
+
     async scanForNewPairs(programAddress: string) {
         const pubKey = new PublicKey(programAddress);
         this.connection.onLogs(pubKey, (logs: any) => {
@@ -1112,7 +1234,7 @@ class SolanaBot {
 
             const monitoringIntervalId = setInterval(async () => {
                 const targetPoolInfo = await formatAmmKeysById(
-                    this.connection,
+                    this.connection2,
                     pair.toBase58()
                 );
                 assert(targetPoolInfo, "cannot find the target pool");
@@ -1171,7 +1293,7 @@ class SolanaBot {
                         Liquidity.computeAmountOut({
                             poolKeys: poolKeys,
                             poolInfo: await Liquidity.fetchInfo({
-                                connection: this.connection,
+                                connection: this.connection2,
                                 poolKeys,
                             }),
                             amountIn: inputTokenAmount,
@@ -1198,11 +1320,11 @@ class SolanaBot {
                         100;
 
                     const baseTokenAmount =
-                        await this.connection.getTokenAccountBalance(
+                        await this.connection2.getTokenAccountBalance(
                             new PublicKey(pairInfo.baseVault.toString())
                         );
                     const quoteTokenAmount =
-                        await this.connection.getTokenAccountBalance(
+                        await this.connection2.getTokenAccountBalance(
                             new PublicKey(pairInfo.quoteVault.toString())
                         );
 
@@ -1214,7 +1336,7 @@ class SolanaBot {
 
                     const liquidity = this.baseAssetPrice * baseAssetAmount * 2;
 
-                    if (liquidity < 1) {
+                    if (liquidity < 10) {
                         let message = `:small_red_triangle_down: ${pairInfo.tokenInfo.json.symbol} rugged!`;
                         this.sendMessageToDiscord(message);
                     } else {
@@ -1259,28 +1381,18 @@ class SolanaBot {
                     }
 
                     console.log(
-                        `${pair.toBase58()} price $${parseFloat(
+                        `${pairInfo.tokenInfo.json.symbol} price $${parseFloat(
                             currentPrice.toString()
                         ).toFixed(12)}, liquidity: $${Math.round(liquidity)}`
-                            .yellow
+                            .info
                     );
 
-                    if (currentPrice == Infinity || liquidity < 1) {
+                    if (currentPrice == Infinity || liquidity < 10) {
                         this.stopMonitoringPairForPriceChange(pair);
-
-                        const pairKey = pair.toBase58();
-                        if (this.allPairs.has(pairKey)) {
-                            const p = this.allPairs.get(pairKey);
-                            if (p) {
-                                this.allPairs.set(pairKey, {
-                                    ...p,
-                                    liquidityRugged: liquidity,
-                                });
-                            }
-                        }
                     }
                 } catch (e) {
-                    console.log(e);
+                    // console.log(e);
+                    console.log(`error checking price for ${pair.toBase58()}`);
                 }
             }, intervalInSeconds * 1000);
 
@@ -1336,7 +1448,7 @@ class SolanaBot {
                 let pairName = `${pairInfo.tokenInfo.json.symbol}`;
 
                 const targetPoolInfo = await formatAmmKeysById(
-                    this.connection,
+                    this.connection2,
                     pair.toBase58()
                 );
                 assert(targetPoolInfo, "cannot find the target pool");
@@ -1387,7 +1499,7 @@ class SolanaBot {
                         Liquidity.computeAmountOut({
                             poolKeys: poolKeys,
                             poolInfo: await Liquidity.fetchInfo({
-                                connection: this.connection,
+                                connection: this.connection2,
                                 poolKeys,
                             }),
                             amountIn: inputTokenAmount,
