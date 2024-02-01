@@ -1,5 +1,10 @@
 require("dotenv").config();
-const { Connection, Keypair, PublicKey } = require("@solana/web3.js");
+const {
+    Connection,
+    Keypair,
+    PublicKey,
+    ComputeBudgetProgram,
+} = require("@solana/web3.js");
 const {
     TokenAccount,
     SPL_ACCOUNT_LAYOUT,
@@ -18,7 +23,7 @@ const axios = require("axios");
 const fs = require("fs/promises");
 const moment = require("moment");
 const { Client, GatewayIntentBits, ActivityType } = require("discord.js");
-const { SlashCommandBuilder } = require("@discordjs/builders");
+import { SlashCommandBuilder } from "@discordjs/builders";
 import Colors = require("colors.ts");
 import { buildAndSendTx, getWalletTokenAccount } from "./utils";
 Colors.enable();
@@ -28,6 +33,7 @@ import { makeTxVersion } from "../config";
 const schedule = require("node-schedule");
 const path = require("path");
 import { Metaplex } from "@metaplex-foundation/js";
+const { Buffer } = require("node:buffer");
 
 type WalletTokenAccounts = Awaited<ReturnType<typeof getWalletTokenAccount>>;
 
@@ -46,6 +52,10 @@ type Position = {
     timeBought: typeof moment;
     profit: string;
     isMoonBag: boolean;
+    stopLoss: number;
+    profitGoal: number;
+    tradeTimeLimit: number;
+    moonBag: number;
 };
 
 class SolanaBot {
@@ -105,14 +115,25 @@ class SolanaBot {
             }
         );
 
+        // this.connection2 = new Connection(
+        //     "https://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
+        //     {
+        //         commitment: "confirmed",
+        //         wsEndpoint:
+        //             "wss://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
+        //     }
+        // );
+
         this.connection2 = new Connection(
-            "https://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
+            "https://solana-mainnet.g.alchemy.com/v2/BQ3Zn6Fc6kLyyqfzD6jKBki8HE_6zhhm",
             {
                 commitment: "confirmed",
                 wsEndpoint:
-                    "wss://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
+                    "wss://solana-mainnet.g.alchemy.com/v2/BQ3Zn6Fc6kLyyqfzD6jKBki8HE_6zhhm",
             }
         );
+
+        // this.connection = this.connection2;
 
         this.metaplex = new Metaplex(this.connection2);
 
@@ -138,6 +159,195 @@ class SolanaBot {
                                 "Get portfolio positions for a wallet address"
                             )
                     );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("buy_token")
+                            .addStringOption((option) =>
+                                option
+                                    .setName("pair")
+                                    .setDescription("The pair to buy")
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("amount")
+                                    .setDescription("The amount to buy")
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("profit")
+                                    .setDescription("The profit target")
+                                    .setRequired(false)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("stop_loss")
+                                    .setDescription("The stop loss")
+                                    .setRequired(false)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("moon_bag")
+                                    .setDescription(
+                                        "The size of the moon bag in %"
+                                    )
+                                    .setRequired(false)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("trade_time_limit")
+                                    .setDescription(
+                                        "The trade time limit in mins"
+                                    )
+                                    .setRequired(false)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("slippage")
+                                    .setDescription("The slippage")
+                                    .setRequired(false)
+                            )
+                            .setDescription(
+                                "Buy a token using the pair address"
+                            )
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("sell_token")
+                            .addStringOption((option) =>
+                                option
+                                    .setName("pair")
+                                    .setDescription("The pair to sell")
+                                    .setRequired(true)
+                            )
+                            .setDescription(
+                                "Sell a token using the pair address"
+                            )
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("monitor_to_sell")
+                            .addStringOption((option) =>
+                                option
+                                    .setName("pair")
+                                    .setDescription("The pair to monitor")
+                                    .setRequired(true)
+                            )
+                            .setDescription(
+                                "Monitor a pair for opportunity to sell"
+                            )
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("set_live_trading")
+                            .addBooleanOption((option) =>
+                                option
+                                    .setName("live")
+                                    .setDescription("Is trading live?")
+                                    .setRequired(true)
+                            )
+                            .setDescription("Set live trading mode on or off")
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("set_monitor_new_pairs")
+                            .addBooleanOption((option) =>
+                                option
+                                    .setName("monitor_pairs")
+                                    .setDescription("Monitor for new pairs?")
+                                    .setRequired(true)
+                            )
+                            .setDescription(
+                                "Set monitoring for new pairs on or off"
+                            )
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("start_monitor_pair_for_liquidity")
+                            .addStringOption((option) =>
+                                option
+                                    .setName("pair")
+                                    .setDescription("The pair to monitor")
+                                    .setRequired(true)
+                            )
+                            .setDescription(
+                                "Monitor a pair for added liquidity"
+                            )
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("stop_monitor_pair_for_liquidity")
+                            .addStringOption((option) =>
+                                option
+                                    .setName("pair")
+                                    .setDescription(
+                                        "The pair to stop monitoring"
+                                    )
+                                    .setRequired(true)
+                            )
+                            .setDescription(
+                                "Stop monitoring a pair for added liquidity"
+                            )
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("set_config")
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("snipe_amount")
+                                    .setDescription("The snipe amount")
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("stop_loss")
+                                    .setDescription("The stop loss % 1 - 100")
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("profit_goal")
+                                    .setDescription("The profit goal % 1 - 100")
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("moon_bag")
+                                    .setDescription("The moon bag % 0.0 - 1.0")
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("low_liq_threshold")
+                                    .setDescription(
+                                        "The low liquidity threshold $"
+                                    )
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("high_liq_threshold")
+                                    .setDescription(
+                                        "The high liquidity threshold $"
+                                    )
+                                    .setRequired(true)
+                            )
+                            .addNumberOption((option) =>
+                                option
+                                    .setName("trade_time_limit")
+                                    .setDescription(
+                                        "The trade time limit in minutes"
+                                    )
+                                    .setRequired(true)
+                            )
+                            .setDescription("Set the trading parameters")
+                    );
+                    guild.commands.create(
+                        new SlashCommandBuilder()
+                            .setName("get_status")
+                            .setDescription("Get the current bot status")
+                    );
                 }
             );
             console.log("set up discord slash commands");
@@ -147,12 +357,260 @@ class SolanaBot {
     }
 
     async init() {
-        await this.loadFromFile();
-        await this.updateBaseAssetPrice();
+        try {
+            await this.loadFromFile();
+            await this.updateBaseAssetPrice();
+            this.setupDiscordCommands();
+        } catch (error) {
+            console.error("Error during initialization:", error);
+        }
+
         this.walletTokenAccounts = await getWalletTokenAccount(
             this.connection2,
             this.wallet.publicKey
         );
+    }
+
+    setupDiscordCommands() {
+        this.discordClient.on(
+            "interactionCreate",
+            async (interaction: {
+                isCommand?: any;
+                reply?: any;
+                options?: any;
+                commandName?: any;
+            }) => {
+                if (!interaction.isCommand()) return;
+                const { commandName } = interaction;
+                if (commandName === "get_positions") {
+                    await interaction.reply("Fetching wallet holdings...");
+
+                    await this.executeGetPositionsCommand();
+                }
+                if (commandName === "buy_token") {
+                    await interaction.reply("Buying token");
+                    const pairContract = interaction.options.getString("pair");
+
+                    const amount =
+                        interaction.options.getNumber("amount") ||
+                        this.config.snipeAmount;
+                    const profitGoal =
+                        interaction.options.getNumber("profit") ||
+                        this.config.profitGoal;
+                    const stopLoss =
+                        interaction.options.getNumber("stop_loss") ||
+                        this.config.stopLoss;
+                    const moonBag =
+                        interaction.options.getNumber("moon_bag") ||
+                        this.config.moonBag;
+                    const tradeTimeLimit =
+                        interaction.options.getNumber("trade_time_limit") ||
+                        this.config.tradeTimeLimit;
+                    const slippage =
+                        interaction.options.getNumber("slippage") ||
+                        this.config.slippage;
+
+                    console.log("execute buy cmd from discord");
+                    console.log({
+                        amount,
+                        profitGoal,
+                        stopLoss,
+                        moonBag,
+                        tradeTimeLimit,
+                        slippage,
+                    });
+
+                    await this.executeBuyCommand(pairContract, {
+                        amount,
+                        profitGoal,
+                        stopLoss,
+                        moonBag,
+                        tradeTimeLimit,
+                        slippage,
+                    });
+                }
+                if (commandName === "sell_token") {
+                    await interaction.reply("Selling token");
+                    const pairContract = interaction.options.getString("pair");
+                    await this.executeSellCommand(pairContract);
+                }
+                if (commandName === "monitor_to_sell") {
+                    await interaction.reply("Monitoring token to sell");
+                    const pairContract = interaction.options.getString("pair");
+                    await this.executeMonitorToSellCommand(pairContract);
+                }
+                if (commandName === "set_live_trading") {
+                    const live = interaction.options.getBoolean("live");
+                    this.config.live = live;
+                    await interaction.reply(`Set live trading to ${live}`);
+                }
+                if (commandName === "set_monitor_new_pairs") {
+                    const monitor_pairs =
+                        interaction.options.getBoolean("monitor_pairs");
+                    // this.setMonitorNewPairs(monitor_pairs);
+                    await interaction.reply(
+                        `Set monitor new pairs to ${monitor_pairs}`
+                    );
+                }
+                if (commandName === "start_monitor_pair_for_liquidity") {
+                    const pairContract = interaction.options.getString("pair");
+                    // this.startMonitorPairForLiq(pairContract);
+                    let pair = await this.getPoolInfo(
+                        new PublicKey(pairContract)
+                    );
+                    const pairName = `${pair.token0Meta.symbol}, ${pair.token1Meta.symbol}`;
+                    await interaction.reply(
+                        `:arrow_forward: Began monitoring ${pairName} for liquidity`
+                    );
+                }
+                if (commandName === "stop_monitor_pair_for_liquidity") {
+                    const pairContract = interaction.options.getString("pair");
+                    // this.stopMonitorPairForLiq(pairContract);
+                    let pair = await this.getPoolInfo(
+                        new PublicKey(pairContract)
+                    );
+                    const pairName = `${pair.token0Meta.symbol}, ${pair.token1Meta.symbol}`;
+                    await interaction.reply(
+                        `:stop_button: Stopped monitoring ${pairName} for liquidity`
+                    );
+                }
+                if (commandName === "set_config") {
+                    const snipeAmount =
+                        interaction.options.getNumber("snipe_amount");
+                    const profitGoal =
+                        interaction.options.getNumber("stop_loss");
+                    const stopLoss =
+                        interaction.options.getNumber("profit_goal");
+                    const moonBag = interaction.options.getNumber("moon_bag");
+                    const lowLiq =
+                        interaction.options.getNumber("low_liq_threshold");
+                    const highLiq =
+                        interaction.options.getNumber("high_liq_threshold");
+                    const tradeTimeLimit =
+                        interaction.options.getNumber("trade_time_limit");
+
+                    this.config.snipeAmount = snipeAmount;
+                    this.config.profitGoal = profitGoal;
+                    this.config.stopLoss = stopLoss;
+                    this.config.moonBag = moonBag;
+                    this.config.lowLiquidityThreshold = lowLiq;
+                    this.config.highLiquidityThreshold = highLiq;
+                    this.config.tradeTimeLimit = tradeTimeLimit;
+
+                    let message =
+                        `:gun: Snipe amount: ${
+                            this.config.snipeAmount
+                        } SOL ($${(
+                            (this.baseAssetPrice / Math.pow(10, 0)) *
+                            this.config.snipeAmount
+                        ).toFixed(2)})\n` +
+                        `:moneybag: Profit goal: ${this.config.profitGoal}% :octagonal_sign: Stop loss: ${this.config.stopLoss}% :crescent_moon: Moon bag: ${this.config.moonBag}\n` +
+                        `:arrow_down_small: Low liquidity threshold: $${this.config.lowLiquidityThreshold} :arrow_up_small: High liquidity threshold: $${this.config.highLiquidityThreshold}\n` +
+                        `:alarm_clock: Time limit: ${this.config.tradeTimeLimit} mins\n\n` +
+                        `Trading live: ${
+                            this.config.live ? ":white_check_mark:" : ":x:"
+                        }\n` +
+                        `Monitoring new pairs: ${
+                            this.config.monitorNewPairs
+                                ? ":white_check_mark:"
+                                : ":x:"
+                        }\n`;
+                    // `Monitoring for rugs: ${
+                    //     this.monitorRugs ? ":white_check_mark:" : ":x:"
+                    // }\n`;
+
+                    await interaction.reply(message);
+                }
+                if (commandName === "get_status") {
+                    let message =
+                        `:gun: Snipe amount: ${
+                            this.config.snipeAmount
+                        } SOL ($${(
+                            (this.baseAssetPrice / Math.pow(10, 0)) *
+                            this.config.snipeAmount
+                        ).toFixed(2)})\n` +
+                        `:moneybag: Profit goal: ${this.config.profitGoal}% :octagonal_sign: Stop loss: ${this.config.stopLoss}% :crescent_moon: Moon bag: ${this.config.moonBag}\n` +
+                        `:arrow_down_small: Low liquidity threshold: $${this.config.lowLiquidityThreshold} :arrow_up_small: High liquidity threshold: $${this.config.highLiquidityThreshold}\n` +
+                        `:alarm_clock: Time limit: ${this.config.tradeTimeLimit} mins\n\n` +
+                        `Trading live: ${
+                            this.config.live ? ":white_check_mark:" : ":x:"
+                        }\n` +
+                        `Monitoring new pairs: ${
+                            this.config.monitorNewPairs
+                                ? ":white_check_mark:"
+                                : ":x:"
+                        }\n` +
+                        `Monitoring for rugs: ${
+                            this.config.monitorRugs
+                                ? ":white_check_mark:"
+                                : ":x:"
+                        }\n`;
+
+                    await interaction.reply(message);
+                }
+            }
+        );
+    }
+
+    async executeGetPositionsCommand() {
+        try {
+            const walletAddress = this.publicKey;
+            // const portfolio = await this.getPortfolio(walletAddress);
+            // const message = `**Current holdings for ${walletAddress}**\n${await this.formatPortfolioMessage(
+            //     portfolio
+            // )}`;
+            // await this.sendMessageToDiscord(message);
+        } catch (error) {
+            console.error("Error executing /get_positions command:", error);
+            await this.sendMessageToDiscord(
+                "Error executing /get_positions command"
+            );
+        }
+    }
+
+    async executeBuyCommand(pairContract: string, config: any) {
+        try {
+            let pair = await this.getPoolInfo(new PublicKey(pairContract));
+            if (!pair) {
+                this.sendMessageToDiscord(`Could not get pair`);
+                return;
+            }
+
+            await this.buyToken(new PublicKey(pairContract), config);
+        } catch (error) {
+            console.error("Error executing /buy_token command:", error);
+            await this.sendMessageToDiscord(
+                "Error executing /buy_token command"
+            );
+        }
+    }
+
+    async executeSellCommand(pairContract: unknown) {
+        try {
+            await this.getPoolInfo(new PublicKey(pairContract));
+            await this.sellToken(new PublicKey(pairContract));
+        } catch (error) {
+            console.error("Error executing /sell_token command:", error);
+            await this.sendMessageToDiscord(
+                "Error executing /sell_token command"
+            );
+        }
+    }
+
+    async executeMonitorToSellCommand(pairContract: unknown) {
+        try {
+            let pair = await this.getPoolInfo(new PublicKey(pairContract));
+            await this.monitorPairToSell(pair, 5);
+            if (pair && !this.allPairs.has(pairContract)) {
+                this.allPairs.set(pairContract, pair);
+                // this.ignoredPairs.delete(pairContract);
+            }
+        } catch (error) {
+            console.error("Error executing /monitor_to_sell command:", error);
+            await this.sendMessageToDiscord(
+                "Error executing /monitor_to_sell command"
+            );
+        }
     }
 
     async loadFromFile(): Promise<void> {
@@ -323,6 +781,13 @@ class SolanaBot {
                     ? poolState.quoteMint
                     : poolState.baseMint;
             let tokenInfo = await this.getTokenMetadata(token.toString());
+            if (!tokenInfo) {
+                console.log(
+                    `could not find token metadata for ${token.toString()}`
+                );
+                return;
+            }
+
             this.allPairs.set(poolIdKey, {
                 pairContract: poolIdKey,
                 tokenInfo: tokenInfo,
@@ -345,13 +810,16 @@ class SolanaBot {
             `waiting for tx to confirm... https://solscan.io/tx/${txSignature}`
         );
         return new Promise<boolean>((resolve, reject) => {
-            const subscriptionId = this.connection2.onSignature(
+            let subscriptionId: any;
+            subscriptionId = this.connection2.onSignature(
                 txSignature,
                 async (result: { err: null }, context: any) => {
-                    // console.log("Transaction signature result:", result);
+                    console.log("Transaction signature result:", result);
                     if (result.err === null) {
                         console.log("Transaction confirmed!".bg_green);
-                        // this.connection2.removeSignatureListener(subscriptionId);
+                        this.connection2.removeSignatureListener(
+                            subscriptionId
+                        );
                         resolve(true);
                     } else {
                         resolve(false);
@@ -419,6 +887,10 @@ class SolanaBot {
                     amountOut: minAmountOut,
                     fixedSide: "in",
                     makeTxVersion,
+                    computeBudgetConfig: {
+                        microLamports: 500000,
+                        units: 250000,
+                    },
                 });
 
             return {
@@ -434,19 +906,26 @@ class SolanaBot {
         return false;
     }
 
-    async buyToken(pair: typeof PublicKey, amount: number) {
+    async buyToken(pair: typeof PublicKey, config: any = null) {
         if (this.openTrades.size >= this.config.maxTrades) {
             console.log(
                 `max amount of trades reached ${this.config.maxTrades}`.bg_red
             );
             return;
         }
+
+        let amount = this.config.snipeAmount;
+        if (config !== null) {
+            amount = Number(config.amount);
+        }
+
         console.log(
             `${moment().format(
                 "hh:mm:ss"
             )} attempt buy ${amount} SOL from pair ${pair.toBase58()}`
                 .bg_magenta
         );
+
         let pairInfo;
         if (this.allPairs.has(pair.toBase58())) {
             pairInfo = this.allPairs.get(pair.toBase58());
@@ -492,7 +971,11 @@ class SolanaBot {
         );
         let slippage = new Percent(30, 100);
 
-        for (let i = 0; i < 3; i++) {
+        if (config !== null) {
+            slippage = new Percent(config.slippage, 100);
+        }
+
+        for (let i = 0; i < 1; i++) {
             const result = await this.swap({
                 outputToken,
                 targetPool: pair.toBase58(),
@@ -556,12 +1039,24 @@ class SolanaBot {
                             timeBought: moment(),
                             profit: profit.toString(),
                             isMoonBag: false,
+                            profitGoal: config
+                                ? config.profitGoal
+                                : this.config.profitGoal,
+                            stopLoss: config
+                                ? config.stopLoss
+                                : this.config.stopLoss,
+                            moonBag: config
+                                ? config.moonBag
+                                : this.config.moonBag,
+                            tradeTimeLimit: config
+                                ? config.tradeTimeLimit
+                                : this.config.tradeTimeLimit,
                         });
 
                         this.openTrades.add(pair.toBase58());
 
                         this.sendMessageToDiscord(
-                            `:gun: Buy success ${pairInfo.tokenInfo.json.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
+                            `:gun: Buy success ${pairInfo.tokenInfo.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
                                 `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount bought: ${(
                                     amountBought /
@@ -582,6 +1077,9 @@ class SolanaBot {
                         return true;
                     } else {
                         console.log("tx fail");
+                        this.sendMessageToDiscord(
+                            `buy tx failed: https://solscan.io/tx/${tx}`
+                        );
                     }
                 }
             }
@@ -681,7 +1179,7 @@ class SolanaBot {
             "WSOL"
         );
 
-        let slippage = new Percent(10, 100);
+        let slippage = new Percent(20, 100);
 
         for (let i = 0; i < 5; i++) {
             const result = await this.swap({
@@ -752,12 +1250,20 @@ class SolanaBot {
                             ).toString(),
                             isMoonBag:
                                 updatedBalance > 0 && updatedAmountIn == 0,
+                            profitGoal:
+                                position?.profitGoal || this.config.profitGoal,
+                            stopLoss:
+                                position?.stopLoss || this.config.stopLoss,
+                            moonBag: position?.moonBag || this.config.moonBag,
+                            tradeTimeLimit:
+                                position?.tradeTimeLimit ||
+                                this.config.tradeTimeLimit,
                         });
 
                         this.openTrades.delete(pair.toBase58());
 
                         this.sendMessageToDiscord(
-                            `:moneybag: Sell success ${pairInfo.tokenInfo.json.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
+                            `:moneybag: Sell success ${pairInfo.tokenInfo.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
                                 `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount sold: ${(
                                     amountSold /
@@ -786,6 +1292,9 @@ class SolanaBot {
                         return true;
                     } else {
                         console.log("Swap transaction failed");
+                        this.sendMessageToDiscord(
+                            `sell tx failed: https://solscan.io/tx/${tx}`
+                        );
                     }
                 }
             }
@@ -830,7 +1339,7 @@ class SolanaBot {
                 return transaction;
             } catch (error) {
                 retries--;
-                await new Promise((resolve) => setTimeout(resolve, 2000));
+                // await new Promise((resolve) => setTimeout(resolve, 2000));
                 if (retries === 0) {
                     console.error(`Unable to decode transaction ${error}`);
                 } else {
@@ -839,6 +1348,24 @@ class SolanaBot {
             }
         }
         return null;
+    }
+
+    decodeIDOInstruction(dataBuffer: any) {
+        const firstByte = dataBuffer[0];
+        const nonceNumber = dataBuffer[1];
+        const openingTimeBytes = dataBuffer.slice(2, 10);
+        const pcTokensBytes = dataBuffer.slice(10, 18);
+        const coinTokensBytes = dataBuffer.slice(18, 26);
+
+        const openingTime = Buffer.from(openingTimeBytes).readBigUInt64LE(0);
+        const pcTokens = Buffer.from(pcTokensBytes).readBigUInt64LE(0);
+        const coinTokens = Buffer.from(coinTokensBytes).readBigUInt64LE(0);
+
+        return {
+            openingTime: new Date(Number(openingTime.toString())),
+            pcTokens: pcTokens,
+            coinTokens: coinTokens,
+        };
     }
 
     async handleNewLiquidity(signature: string, pair: typeof PublicKey) {
@@ -861,14 +1388,20 @@ class SolanaBot {
 
         let walletAddLiquidity = addresses[ido.accountKeyIndexes[17]];
         let lpDestination = addresses[ido.accountKeyIndexes[20]];
-        // console.log(
-        //     `address who added liquidity: ${walletAddLiquidity.toBase58()}`
-        // );
-        // console.log(`lp holder: ${lpDestination.toBase58()}`);
+
+        let decodedData = this.decodeIDOInstruction(ido.data);
 
         await this.getPoolInfo(pair);
         const pairInfo = this.allPairs.get(pair.toBase58());
         if (!pairInfo) return;
+
+        if (!pairInfo.baseVault || !pairInfo.quoteVault) {
+            console.log(
+                "no base or quote info",
+                JSON.stringify(pairInfo, null, 2)
+            );
+            return;
+        }
 
         const baseTokenAmount = await this.connection2.getTokenAccountBalance(
             new PublicKey(pairInfo.baseVault.toString())
@@ -889,7 +1422,33 @@ class SolanaBot {
 
         const baseMintIsBaseAsset = pairInfo.baseMint === this.baseAsset;
 
+        const baseAssetAdded = baseMintIsBaseAsset
+            ? Number(decodedData.coinTokens) / Math.pow(10, 9)
+            : Number(decodedData.pcTokens) / Math.pow(10, 9);
+
+        const liquidityAdded = this.baseAssetPrice * baseAssetAdded * 2;
+
+        const tokenAdded = baseMintIsBaseAsset
+            ? Number(decodedData.pcTokens) /
+              Math.pow(10, pairInfo.tokenInfo.mint.decimals)
+            : Number(decodedData.coinTokens) /
+              Math.pow(10, pairInfo.tokenInfo.mint.decimals);
+        if (!pairInfo.tokenInfo.mint) {
+            return;
+        }
+
+        console.log(
+            `baseAssetAdded: ${baseAssetAdded}, tokenAdded: ${tokenAdded}`
+        );
+        const supply =
+            Number(pairInfo.tokenInfo.mint.supply.basisPoints) /
+            Math.pow(10, pairInfo.tokenInfo.mint.decimals);
+
+        const percentAddedToPool = tokenAdded / supply;
+        console.log(`percentAddedToPool: ${percentAddedToPool}`);
         const price = baseMintIsBaseAsset ? base / quote : quote / base;
+
+        const marketCap = (supply * (price * this.baseAssetPrice)).toFixed(2);
 
         const pairKey = pair.toBase58();
         if (this.allPairs.has(pairKey)) {
@@ -897,64 +1456,66 @@ class SolanaBot {
             if (p) {
                 this.allPairs.set(pairKey, {
                     ...p,
-                    liquidityAdded: liquidity,
+                    liquidityAdded: liquidityAdded,
                     liquidityAddedTime: addedTime,
                     liquidityAddTx: signature,
-                    walletAddLiquidity: walletAddLiquidity,
+                    lpAdder: walletAddLiquidity,
                     lpHolder: lpDestination,
-                    baseMintAdded: baseMintIsBaseAsset ? base : quote,
+                    baseAssetAdded: baseAssetAdded,
+                    tokenAdded: tokenAdded,
+                    percentAddedToPool: percentAddedToPool,
+                    totalSupply: supply,
                 });
             }
         }
 
-        console.log(
-            `${moment().format(
-                "hh:mm:ss"
-            )} https://dexscreener.com/solana/${pair.toBase58()}\nbase: ${base}, quote: ${quote}, liquidity: $${liquidity.toFixed(
-                2
-            )}, open time: ${poolOpenTime}, price: ${price} SOL ($${
-                price ? (price * this.baseAssetPrice).toFixed(10) : 0
-            })`.bg_green
-        );
-
         if (
-            liquidity < this.config.upperLiquidityBound &&
-            liquidity > this.config.lowerLiquidityBound &&
+            liquidityAdded < this.config.upperLiquidityBound &&
+            liquidityAdded > this.config.lowerLiquidityBound &&
             poolOpenTime > moment().subtract(10, "minute")
         ) {
             this.sendMessageToDiscord(
-                `:new: ${pairInfo.tokenInfo.json.name} ${
-                    pairInfo.tokenInfo.json.symbol
+                `:new: ${pairInfo.tokenInfo.name} ${
+                    pairInfo.tokenInfo.symbol
                 } / SOL\n${
-                    pairInfo.tokenInfo.json.description
-                }\nliquidity: $${liquidity.toFixed(
+                    pairInfo.tokenInfo.json
+                        ? pairInfo.tokenInfo.json.description
+                        : ""
+                }\nliquidity added: $${liquidityAdded.toFixed(
                     2
-                )}\nopen time: <t:${poolOpenTime.unix()}:R>\nprice: ${price} SOL ($${
+                )}, supply: ${supply}, added to pool: ${tokenAdded} (${(
+                    percentAddedToPool * 100
+                ).toFixed(
+                    2
+                )}%), market cap: $${marketCap}\nopen time: <t:${poolOpenTime.unix()}:R>\nprice: ${price} SOL ($${
                     price ? (price * this.baseAssetPrice).toFixed(10) : 0
                 })\n` +
                     // `lp adder: https://solscan.io/account/${walletAddLiquidity.toBase58()}\n` +
                     // `lp holder: https://solscan.io/account/${lpDestination.toBase58()}\n` +
-                    `chart: https://dexscreener.com/solana/${pair.toBase58()}\n`
-                // `add liq tx: https://solscan.io/tx/${signature}`
+                    `chart: https://dexscreener.com/solana/${pair.toBase58()}\n` +
+                    `add liq tx: https://solscan.io/tx/${signature}`
             );
         }
         if (
-            liquidity < this.config.upperLiquidityBound &&
-            liquidity > this.config.lowerLiquidityBound &&
+            liquidityAdded < this.config.upperLiquidityBound &&
+            liquidityAdded > this.config.lowerLiquidityBound &&
             poolOpenTime < moment() &&
-            poolOpenTime > moment().subtract(30, "seconds")
+            poolOpenTime > moment().subtract(30, "seconds") &&
+            percentAddedToPool > this.config.percentAddedRequirement
         ) {
             if (!this.config.live) {
-                await this.monitorPairForPriceChange(pair, 10, 5, 10);
+                // await this.monitorPairForPriceChange(pair, 10, 5, 10);
                 await this.lookForRemoveLiquidity(pair);
             } else {
-                await this.buyToken(pair, this.config.snipeAmount);
+                await this.buyToken(pair);
+                await this.lookForRemoveLiquidity(pair);
             }
         } else if (
-            liquidity < this.config.upperLiquidityBound &&
-            liquidity > this.config.lowerLiquidityBound &&
+            liquidityAdded < this.config.upperLiquidityBound &&
+            liquidityAdded > this.config.lowerLiquidityBound &&
             poolOpenTime > moment() &&
-            poolOpenTime < moment().add(30, "minute")
+            poolOpenTime < moment().add(30, "minute") &&
+            percentAddedToPool > this.config.percentAddedRequirement
         ) {
             console.log(
                 `adding job to buy token at ${poolOpenTime}`.bg_magenta
@@ -964,10 +1525,11 @@ class SolanaBot {
                 // console.log("trigger job");
                 try {
                     if (!this.config.live) {
-                        await this.monitorPairForPriceChange(pair, 10, 5, 10);
+                        // await this.monitorPairForPriceChange(pair, 10, 5, 10);
                         await this.lookForRemoveLiquidity(pair);
                     } else {
-                        await this.buyToken(pair, this.config.snipeAmount);
+                        await this.buyToken(pair);
+                        await this.lookForRemoveLiquidity(pair);
                     }
                 } catch (error) {
                     console.error("Error scheduling buy operation:", error);
@@ -985,13 +1547,7 @@ class SolanaBot {
 
             return metadata;
         } catch (e) {
-            return {
-                json: {
-                    symbol: "UNKNOWN",
-                    name: "UNKNOWN",
-                    description: "",
-                },
-            };
+            return null;
         }
     }
 
@@ -1044,6 +1600,7 @@ class SolanaBot {
         let token =
             baseMint.toString() == this.baseAsset ? quoteMint : baseMint;
         let tokenInfo = await this.getTokenMetadata(token.toString());
+        if (!tokenInfo) return;
 
         this.allPairs.set(poolId.toBase58(), {
             tokenInfo: tokenInfo,
@@ -1066,7 +1623,11 @@ class SolanaBot {
     }
 
     async lookForAddLiquidity(pubKey: typeof PublicKey) {
-        let name = this.allPairs.get(pubKey.toBase58()).tokenInfo.json.symbol;
+        let pair = this.allPairs.get(pubKey.toBase58());
+        let name = "";
+        if (pair) {
+            name = pair.tokenInfo.symbol;
+        }
         console.log(`start watching ${name} for liquidity tx`.bg_cyan);
         let subId: any;
 
@@ -1078,7 +1639,11 @@ class SolanaBot {
                         `stop watching ${name} for liquidity tx`.bg_red
                     );
 
-                    this.handleNewLiquidity(result.signature, pubKey);
+                    try {
+                        this.handleNewLiquidity(result.signature, pubKey);
+                    } catch (e) {
+                        console.log(`error handling new liquidity`);
+                    }
                 }
             }
         });
@@ -1112,7 +1677,7 @@ class SolanaBot {
                     ...p,
                     baseMintRemoved: baseAmountGained / Math.pow(10, 9),
                     rugProfit:
-                        baseAmountGained / Math.pow(10, 9) - p.baseMintAdded,
+                        baseAmountGained / Math.pow(10, 9) - p.baseAssetAdded,
                     liquidityRemovedTime: timeRemoved,
                     liquidityRugged:
                         (baseAmountGained / Math.pow(10, 9)) *
@@ -1120,7 +1685,7 @@ class SolanaBot {
                         2,
                     liquidityRemoveTx: signature,
                 });
-                profit = baseAmountGained / Math.pow(10, 9) - p.baseMintAdded;
+                profit = baseAmountGained / Math.pow(10, 9) - p.baseAssetAdded;
                 const duration = moment.duration(
                     timeRemoved.diff(moment(p.liquidityAddedTime))
                 );
@@ -1132,7 +1697,7 @@ class SolanaBot {
                 formattedDuration += `${duration.minutes()} minutes ${duration.seconds()} seconds`;
 
                 this.sendMessageToDiscord(
-                    `:red_square: ${pair.tokenInfo.json.symbol} rugged ${(
+                    `:red_square: ${pair.tokenInfo.symbol} rugged ${(
                         baseAmountGained / Math.pow(10, 9)
                     ).toFixed(5)} SOL (+${profit.toFixed(3)} SOL $${(
                         profit * this.baseAssetPrice
@@ -1146,7 +1711,7 @@ class SolanaBot {
 
     async lookForRemoveLiquidity(pubKey: typeof PublicKey) {
         let pair = this.allPairs.get(pubKey.toBase58());
-        let name = pair.tokenInfo.json.symbol;
+        let name = pair.tokenInfo.symbol;
 
         console.log(`start watching ${name} for remove liquidity tx`.bg_cyan);
         let subId: any;
@@ -1337,7 +1902,7 @@ class SolanaBot {
                     const liquidity = this.baseAssetPrice * baseAssetAmount * 2;
 
                     if (liquidity < 10) {
-                        let message = `:small_red_triangle_down: ${pairInfo.tokenInfo.json.symbol} rugged!`;
+                        let message = `:small_red_triangle_down: ${pairInfo.tokenInfo.symbol} rugged!`;
                         this.sendMessageToDiscord(message);
                     } else {
                         if (
@@ -1346,7 +1911,7 @@ class SolanaBot {
                         ) {
                             let message =
                                 `:small_red_triangle_down: ${
-                                    pairInfo.tokenInfo.json.symbol
+                                    pairInfo.tokenInfo.symbol
                                 } Price is down ${parseFloat(
                                     priceChangeToHighest.toString()
                                 ).toFixed(2)}% in the last ` +
@@ -1364,7 +1929,7 @@ class SolanaBot {
                         if (priceChangeToLowest > priceChangeThreshold) {
                             let message =
                                 `:green_circle: ${
-                                    pairInfo.tokenInfo.json.symbol
+                                    pairInfo.tokenInfo.symbol
                                 } price is up ${parseFloat(
                                     priceChangeToLowest.toString()
                                 ).toFixed(2)}% in the last ` +
@@ -1381,7 +1946,7 @@ class SolanaBot {
                     }
 
                     console.log(
-                        `${pairInfo.tokenInfo.json.symbol} price $${parseFloat(
+                        `${pairInfo.tokenInfo.symbol} price $${parseFloat(
                             currentPrice.toString()
                         ).toFixed(12)}, liquidity: $${Math.round(liquidity)}`
                             .info
@@ -1445,7 +2010,7 @@ class SolanaBot {
                 }
                 if (!pairInfo) return;
 
-                let pairName = `${pairInfo.tokenInfo.json.symbol}`;
+                let pairName = `${pairInfo.tokenInfo.symbol}`;
 
                 const targetPoolInfo = await formatAmmKeysById(
                     this.connection2,
@@ -1517,15 +2082,15 @@ class SolanaBot {
                 if (
                     currentTime >
                     moment(position.timeBought).add(
-                        this.config.tradeTimeLimit,
+                        position.tradeTimeLimit,
                         "minute"
                     )
                 ) {
                     console.log(
-                        `trade time limit reached (${this.config.tradeTimeLimit} minutes)`
+                        `trade time limit reached (${position.tradeTimeLimit} minutes)`
                     );
                     await this.sendMessageToDiscord(
-                        `trade time limit reached for ${pairName} (${this.config.tradeTimeLimit} minutes)`
+                        `trade time limit reached for ${pairName} (${position.tradeTimeLimit} minutes)`
                     );
                     this.stopMonitoringPairToSell(pair);
                     result = await this.sellToken(pair);
@@ -1545,7 +2110,7 @@ class SolanaBot {
                     const price = usdValue / convertedBalance;
 
                     const moonBagGoal = Math.round(
-                        this.config.snipeAmount * 5 * Math.pow(10, 6)
+                        Number(position.amountIn) * 5 * Math.pow(10, 6)
                     );
 
                     if (
@@ -1578,7 +2143,7 @@ class SolanaBot {
                         ((convertedQuote - amountIn) / amountIn) * 100;
 
                     if (
-                        percentageIncrease <= this.config.stopLoss * 100 * -1 &&
+                        percentageIncrease <= position.stopLoss * 100 * -1 &&
                         quote < amountIn
                     ) {
                         console.log(
@@ -1595,19 +2160,21 @@ class SolanaBot {
                         result = await this.sellToken(pair);
                         return;
                     }
-                    if (
-                        percentageIncrease >=
-                        this.config.profitGoalPercent * 100
-                    ) {
+                    if (percentageIncrease >= position.profitGoal * 100) {
                         console.log(
                             `profit goal reached for ${pairName} ${percentageIncrease.toFixed(
                                 2
-                            )}%`
+                            )}%`.bg_green
+                        );
+                        this.sendMessageToDiscord(
+                            `profit goal reached for ${pairName} ${percentageIncrease.toFixed(
+                                2
+                            )}% ${this.discordTag}`
                         );
                         this.stopMonitoringPairToSell(pair);
                         if (
                             percentageIncrease >=
-                            this.config.profitGoalPercent * 100 * 2
+                            position.profitGoal * 100 * 2
                         ) {
                             result = await this.sellToken(
                                 pair,
@@ -1618,7 +2185,7 @@ class SolanaBot {
                                 pair,
                                 Math.round(
                                     Number(position.balance) *
-                                        (1 - this.config.moonBagPercent)
+                                        (1 - position.moonBag)
                                 )
                             );
                         }

@@ -1,1 +1,80 @@
-[]
+[
+  {
+    "pairContract": "Cb3Vs5cjp8F4rhXgXJFvhFDCSsgHEXqDxBKpdbJ5Lcjh",
+    "tokenContract": "DkZj9LtSaacx2TBXaMb5Q62pZxb5EDLZ1fC1vDRoxwu2",
+    "timeBought": "2024-02-01T06:54:27.086Z",
+    "amountIn": "2837965",
+    "balance": "0",
+    "profit": "-2837965",
+    "isMoonBag": false,
+    "profitGoal": 0.2,
+    "stopLoss": 0.1,
+    "moonBag": 0,
+    "tradeTimeLimit": 5
+  },
+  {
+    "pairContract": "3P73ds8xoxoBTvxqYQUmtgZzsxmz6xhMGrMtmDWT9Dg1",
+    "tokenContract": "9fQxwx6oTPt19B31dBBK4R4iamT1MPdJzkRYJVF2wJ6e",
+    "timeBought": "2024-02-01T06:56:07.059Z",
+    "amountIn": "2193075",
+    "balance": "0",
+    "profit": "-2193075",
+    "isMoonBag": false,
+    "profitGoal": 0.2,
+    "stopLoss": 0.1,
+    "moonBag": 0,
+    "tradeTimeLimit": 5
+  },
+  {
+    "pairContract": "FvRNAeVVtfFw1e5jaH2AFSYKTgktpMauC1ugs2E6fgYb",
+    "tokenContract": "DguFgj397DZtP1EGzW129Hwo4WQT25pSA5rVZhNC7gB5",
+    "timeBought": "2024-02-01T07:04:29.397Z",
+    "amountIn": "0",
+    "balance": "0",
+    "profit": "3756869",
+    "isMoonBag": false,
+    "profitGoal": 0.2,
+    "stopLoss": 0.5,
+    "moonBag": 0,
+    "tradeTimeLimit": 5
+  },
+  {
+    "pairContract": "6zgaxG7TKvs6DAedRFi5zx5cuLtCqSbbmfR3HAimEsYU",
+    "tokenContract": "A7cdEjDzt7QmSRRE32nV9zzfzDNayCQoRgnFQf4E7xbr",
+    "timeBought": "2024-02-01T07:33:01.760Z",
+    "amountIn": "3231409",
+    "balance": "0",
+    "profit": "-3231409",
+    "isMoonBag": false,
+    "profitGoal": 0.2,
+    "stopLoss": 0.5,
+    "moonBag": 0,
+    "tradeTimeLimit": 5
+  },
+  {
+    "pairContract": "EeF2c7dj9yFEVJFBFZ6uP7EFWgeKTXE4bdgq64EZ7Vum",
+    "tokenContract": "53q1uhNXTYY6sm49fmaPE76yvTf7DKajW2Aj4qSDyxom",
+    "timeBought": "2024-02-01T08:29:11.493Z",
+    "amountIn": "0",
+    "balance": "0",
+    "profit": "6850602",
+    "isMoonBag": false,
+    "profitGoal": 0.2,
+    "stopLoss": 0.5,
+    "moonBag": 0,
+    "tradeTimeLimit": 2
+  },
+  {
+    "pairContract": "5HGZaGykJ3wsy2GRxUHRwwtQZ1sYHDi2S89C6MTthup2",
+    "tokenContract": "Hi6H8oZyosQ7bgm6mM5NUVgdWqt83hsxqiRqfs8MyJWo",
+    "timeBought": "2024-02-01T08:29:17.979Z",
+    "amountIn": "27299252",
+    "balance": "0",
+    "profit": "-27299252",
+    "isMoonBag": false,
+    "profitGoal": 0.2,
+    "stopLoss": 0.5,
+    "moonBag": 0,
+    "tradeTimeLimit": 2
+  }
+]

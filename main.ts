@@ -1,5 +1,6 @@
 import { PublicKey } from "@solana/web3.js";
 require("dotenv").config();
+const moment = require("moment");
 
 const SolanaBot = require("./modules/bot");
 
@@ -7,15 +8,17 @@ const main = async () => {
     const privateKey = process.env.KEY;
 
     const config = {
-        live: false, // turn live trading on and off
-        snipeAmount: 0.05, // %
-        maxTrades: 1,
-        profitGoalPercent: 0.1, // %
-        moonBagPercent: 0, // %
-        stopLoss: 0.6, // %
-        tradeTimeLimit: 5, // minutes
-        lowerLiquidityBound: 400, // USD
-        upperLiquidityBound: 30000, // USD
+        live: true, // turn live trading on and off
+        snipeAmount: 0.025, // %
+        percentAddedRequirement: 0.9,
+        maxTrades: 2,
+        profitGoal: 0.2, // %
+        moonBag: 0, // %
+        stopLoss: 0.5, // %
+        tradeTimeLimit: 2, // minutes
+        lowerLiquidityBound: 2000, // USD
+        upperLiquidityBound: 20000, // USD
+        slippage: 10, // %
     };
 
     const solanaBot = new SolanaBot(privateKey, config);
@@ -27,8 +30,29 @@ const main = async () => {
     await solanaBot.scanForNewPairs(openBookAddress);
 
     const targetPool = new PublicKey(
-        "2nrJfXnFEGEsK9HHKjQwc4VHH3jUUcvLC6gBCVX3QStY"
+        "6WtzqetpC943GPoYmLVMjvgGeKDQc2o5aGBGwRRz3GeW"
     );
+
+    // let durations: any[] = [];
+
+    // solanaBot.allPairs.forEach((pair: any) => {
+    //     if (pair.liquidityAddedTime && pair.liquidityRemovedTime) {
+    //         let added = moment(pair.liquidityAddedTime);
+    //         let removed = moment(pair.liquidityRemovedTime);
+
+    //         let duration = removed.diff(added, "minutes");
+    //         console.log(
+    //             `${pair.tokenInfo.symbol} added: ${added}, removed: ${removed}, duration: ${duration}`
+    //         );
+    //         if (duration < 10) durations.push(duration);
+    //     }
+    // });
+    // let sum = durations.reduce(function (total, currentValue) {
+    //     return total + currentValue;
+    // }, 0);
+
+    // let avg = sum / durations.length;
+    // console.log(`avg duration: ${avg}`);
 
     // await solanaBot.getPoolInfo(targetPool);
     // await solanaBot.lookForRemoveLiquidity(targetPool);
