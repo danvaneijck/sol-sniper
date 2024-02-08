@@ -115,25 +115,10 @@ class SolanaBot {
             }
         );
 
-        // this.connection2 = new Connection(
-        //     "https://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
-        //     {
-        //         commitment: "confirmed",
-        //         wsEndpoint:
-        //             "wss://few-bold-research.solana-mainnet.quiknode.pro/b90a308ae6be66b55f0b40108028edfaecf39145/",
-        //     }
-        // );
-
-        this.connection2 = new Connection(
-            "https://solana-mainnet.g.alchemy.com/v2/BQ3Zn6Fc6kLyyqfzD6jKBki8HE_6zhhm",
-            {
-                commitment: "confirmed",
-                wsEndpoint:
-                    "wss://solana-mainnet.g.alchemy.com/v2/BQ3Zn6Fc6kLyyqfzD6jKBki8HE_6zhhm",
-            }
-        );
-
-        // this.connection = this.connection2;
+        this.connection2 = new Connection(process.env.QUICKNODE_ENDPOINT, {
+            commitment: "confirmed",
+            wsEndpoint: process.env.QUICKNODE_WS,
+        });
 
         this.metaplex = new Metaplex(this.connection2);
 
@@ -147,7 +132,7 @@ class SolanaBot {
         });
         this.discordClient.login(this.discordToken);
 
-        this.discordTag = `<@352761566401265664>`;
+        this.discordTag = process.env.DISCORD_TAG || "";
         this.discordClient.on("ready", () => {
             console.log(`Logged in as ${this.discordClient.user.tag}!`);
             this.discordClient.guilds.cache.forEach(
@@ -889,7 +874,7 @@ class SolanaBot {
                     makeTxVersion,
                     computeBudgetConfig: {
                         microLamports: 500000,
-                        units: 250000,
+                        units: 100000,
                     },
                 });
 
@@ -1057,7 +1042,7 @@ class SolanaBot {
 
                         this.sendMessageToDiscord(
                             `:gun: Buy success ${pairInfo.tokenInfo.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
-                                `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
+                                `https://photon-sol.tinyastro.io/en/lp/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount bought: ${(
                                     amountBought /
                                     Math.pow(
@@ -1264,7 +1249,7 @@ class SolanaBot {
 
                         this.sendMessageToDiscord(
                             `:moneybag: Sell success ${pairInfo.tokenInfo.symbol} ${this.discordTag}\nhttps://solscan.io/tx/${tx}\n` +
-                                `https://dexscreener.com/solana/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
+                                `https://photon-sol.tinyastro.io/en/lp/${pair.toBase58()}?maker=${this.publicKey.toBase58()}\n` +
                                 `amount sold: ${(
                                     amountSold /
                                     Math.pow(
@@ -1492,7 +1477,7 @@ class SolanaBot {
                 })\n` +
                     // `lp adder: https://solscan.io/account/${walletAddLiquidity.toBase58()}\n` +
                     // `lp holder: https://solscan.io/account/${lpDestination.toBase58()}\n` +
-                    `chart: https://dexscreener.com/solana/${pair.toBase58()}\n` +
+                    `chart: https://photon-sol.tinyastro.io/en/lp/${pair.toBase58()}\n` +
                     `add liq tx: https://solscan.io/tx/${signature}`
             );
         }
@@ -1591,7 +1576,7 @@ class SolanaBot {
             baseMint.toString() !== this.baseAsset
         ) {
             console.log(
-                `pair is not sol based https://dexscreener.com/solana/${poolId.toBase58()}`
+                `pair is not sol based https://photon-sol.tinyastro.io/en/lp/${poolId.toBase58()}`
                     .error
             );
             return;
@@ -1617,7 +1602,7 @@ class SolanaBot {
             console.log(info.poolOpenTime, poolOpenTime);
 
             await this.sendMessageToDiscord(
-                `New market found. open time: <t:${poolOpenTime.unix()}:R>\nhttps://dexscreener.com/solana/${poolId.toBase58()}`
+                `New market found. open time: <t:${poolOpenTime.unix()}:R>\nhttps://photon-sol.tinyastro.io/en/lp/${poolId.toBase58()}`
             );
         }
     }

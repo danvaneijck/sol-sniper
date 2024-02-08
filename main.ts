@@ -8,16 +8,16 @@ const main = async () => {
     const privateKey = process.env.KEY;
 
     const config = {
-        live: true, // turn live trading on and off
-        snipeAmount: 0.025, // %
+        live: false, // turn live trading on and off
+        snipeAmount: 0.01, // %
         percentAddedRequirement: 0.9,
         maxTrades: 2,
-        profitGoal: 0.2, // %
+        profitGoal: 0.25, // %
         moonBag: 0, // %
         stopLoss: 0.5, // %
         tradeTimeLimit: 2, // minutes
-        lowerLiquidityBound: 2000, // USD
-        upperLiquidityBound: 20000, // USD
+        lowerLiquidityBound: 1000, // USD
+        upperLiquidityBound: 60000, // USD
         slippage: 10, // %
     };
 
@@ -32,27 +32,6 @@ const main = async () => {
     const targetPool = new PublicKey(
         "6WtzqetpC943GPoYmLVMjvgGeKDQc2o5aGBGwRRz3GeW"
     );
-
-    // let durations: any[] = [];
-
-    // solanaBot.allPairs.forEach((pair: any) => {
-    //     if (pair.liquidityAddedTime && pair.liquidityRemovedTime) {
-    //         let added = moment(pair.liquidityAddedTime);
-    //         let removed = moment(pair.liquidityRemovedTime);
-
-    //         let duration = removed.diff(added, "minutes");
-    //         console.log(
-    //             `${pair.tokenInfo.symbol} added: ${added}, removed: ${removed}, duration: ${duration}`
-    //         );
-    //         if (duration < 10) durations.push(duration);
-    //     }
-    // });
-    // let sum = durations.reduce(function (total, currentValue) {
-    //     return total + currentValue;
-    // }, 0);
-
-    // let avg = sum / durations.length;
-    // console.log(`avg duration: ${avg}`);
 
     // await solanaBot.getPoolInfo(targetPool);
     // await solanaBot.lookForRemoveLiquidity(targetPool);
