@@ -1,6 +1,6 @@
-# sol-bot
+# sol-sniper
 
-trading memes on solana
+sunday project trading memes on solana
 
 - discord bot that can monitor new pairs and snipe according to config
 - buy and sell tokens given a pair contract
