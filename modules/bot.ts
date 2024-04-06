@@ -1595,7 +1595,7 @@ class SolanaBot {
         let info = await this.getPoolInfo(poolId);
 
         if (!info) {
-            this.lookForAddLiquidity(poolId);
+            await this.lookForAddLiquidity(poolId);
         } else {
             console.log(`status: ${parseInt(info.status, 16)}`);
             const poolOpenTime = moment.unix(parseInt(info.poolOpenTime, 16));
@@ -1616,22 +1616,22 @@ class SolanaBot {
         console.log(`start watching ${name} for liquidity tx`.bg_cyan);
         let subId: any;
 
-        subId = this.connection.onLogs(pubKey, (result: any) => {
-            if (result.err == null) {
-                if (result.logs.length > 100) {
-                    this.connection.removeOnLogsListener(subId);
-                    console.log(
-                        `stop watching ${name} for liquidity tx`.bg_red
-                    );
+        try {
+            subId = this.connection.onLogs(pubKey, async (result: any) => {
+                if (result.err == null) {
+                    if (result.logs.length > 100) {
+                        this.connection.removeOnLogsListener(subId);
+                        console.log(
+                            `stop watching ${name} for liquidity tx`.bg_red
+                        );
 
-                    try {
-                        this.handleNewLiquidity(result.signature, pubKey);
-                    } catch (e) {
-                        console.log(`error handling new liquidity`);
+                        await this.handleNewLiquidity(result.signature, pubKey);
                     }
                 }
-            }
-        });
+            });
+        } catch (e) {
+            console.log(`error handling new liquidity`);
+        }
     }
 
     async handleRemoveLiquidity(signature: string, pair: typeof PublicKey) {
@@ -1738,7 +1738,7 @@ class SolanaBot {
 
     async scanForNewPairs(programAddress: string) {
         const pubKey = new PublicKey(programAddress);
-        this.connection.onLogs(pubKey, (logs: any) => {
+        this.connection.onLogs(pubKey, async (logs: any) => {
             if (logs.err == null) {
                 let foundCandidate = false;
 
@@ -1760,7 +1760,7 @@ class SolanaBot {
                 }
 
                 if (foundCandidate) {
-                    this.handleNewMarket(logs.signature);
+                    await this.handleNewMarket(logs.signature);
                 }
             }
         });
