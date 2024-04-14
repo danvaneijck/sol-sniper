@@ -26,10 +26,10 @@ const main = async () => {
 
         await solanaBot.init();
         solanaBot.startMonitoringBasePair(10);
-
-        const openBookAddress = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
-        await solanaBot.scanForNewPairs(openBookAddress);
+        
+        await solanaBot.enableMonitoringNewPairs();
         await solanaBot.sendMessageToDiscord("bot start up");
+
     } catch (error) {
         console.error("An error occurred:", error);
     }

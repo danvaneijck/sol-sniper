@@ -83,6 +83,8 @@ class SolanaBot {
     walletTokenAccounts: any;
     openTrades: Set<string>;
     metaplex: Metaplex;
+    logSubscriptionId: number | null = null;
+    openBookAddress: string;
 
     constructor(
         privateKey: string | undefined,
@@ -137,13 +139,13 @@ class SolanaBot {
             console.log(`Logged in as ${this.discordClient.user.tag}!`);
             this.discordClient.guilds.cache.forEach(
                 (guild: { commands: { create: (arg0: any) => void } }) => {
-                    guild.commands.create(
-                        new SlashCommandBuilder()
-                            .setName("get_positions")
-                            .setDescription(
-                                "Get portfolio positions for a wallet address"
-                            )
-                    );
+                    // guild.commands.create(
+                    //     new SlashCommandBuilder()
+                    //         .setName("get_positions")
+                    //         .setDescription(
+                    //             "Get portfolio positions for a wallet address"
+                    //         )
+                    // );
                     guild.commands.create(
                         new SlashCommandBuilder()
                             .setName("buy_token")
@@ -260,21 +262,21 @@ class SolanaBot {
                                 "Monitor a pair for added liquidity"
                             )
                     );
-                    guild.commands.create(
-                        new SlashCommandBuilder()
-                            .setName("stop_monitor_pair_for_liquidity")
-                            .addStringOption((option) =>
-                                option
-                                    .setName("pair")
-                                    .setDescription(
-                                        "The pair to stop monitoring"
-                                    )
-                                    .setRequired(true)
-                            )
-                            .setDescription(
-                                "Stop monitoring a pair for added liquidity"
-                            )
-                    );
+                    // guild.commands.create(
+                    //     new SlashCommandBuilder()
+                    //         .setName("stop_monitor_pair_for_liquidity")
+                    //         .addStringOption((option) =>
+                    //             option
+                    //                 .setName("pair")
+                    //                 .setDescription(
+                    //                     "The pair to stop monitoring"
+                    //                 )
+                    //                 .setRequired(true)
+                    //         )
+                    //         .setDescription(
+                    //             "Stop monitoring a pair for added liquidity"
+                    //         )
+                    // );
                     guild.commands.create(
                         new SlashCommandBuilder()
                             .setName("set_config")
@@ -339,6 +341,8 @@ class SolanaBot {
         });
 
         this.monitoringBasePairIntervalId = undefined;
+
+        this.openBookAddress = "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX";
     }
 
     async init() {
@@ -367,11 +371,11 @@ class SolanaBot {
             }) => {
                 if (!interaction.isCommand()) return;
                 const { commandName } = interaction;
-                if (commandName === "get_positions") {
-                    await interaction.reply("Fetching wallet holdings...");
+                // if (commandName === "get_positions") {
+                //     await interaction.reply("Fetching wallet holdings...");
 
-                    await this.executeGetPositionsCommand();
-                }
+                //     await this.executeGetPositionsCommand();
+                // }
                 if (commandName === "buy_token") {
                     await interaction.reply("Buying token");
                     const pairContract = interaction.options.getString("pair");
@@ -432,14 +436,19 @@ class SolanaBot {
                 if (commandName === "set_monitor_new_pairs") {
                     const monitor_pairs =
                         interaction.options.getBoolean("monitor_pairs");
-                    // this.setMonitorNewPairs(monitor_pairs);
+                        if(monitor_pairs){
+                            this.enableMonitoringNewPairs()
+                        }
+                        else{
+                            this.disableMonitoringNewPairs()
+                        }
                     await interaction.reply(
                         `Set monitor new pairs to ${monitor_pairs}`
                     );
                 }
                 if (commandName === "start_monitor_pair_for_liquidity") {
                     const pairContract = interaction.options.getString("pair");
-                    // this.startMonitorPairForLiq(pairContract);
+                    this.lookForAddLiquidity(pairContract);
                     let pair = await this.getPoolInfo(
                         new PublicKey(pairContract)
                     );
@@ -448,17 +457,17 @@ class SolanaBot {
                         `:arrow_forward: Began monitoring ${pairName} for liquidity`
                     );
                 }
-                if (commandName === "stop_monitor_pair_for_liquidity") {
-                    const pairContract = interaction.options.getString("pair");
-                    // this.stopMonitorPairForLiq(pairContract);
-                    let pair = await this.getPoolInfo(
-                        new PublicKey(pairContract)
-                    );
-                    const pairName = `${pair.token0Meta.symbol}, ${pair.token1Meta.symbol}`;
-                    await interaction.reply(
-                        `:stop_button: Stopped monitoring ${pairName} for liquidity`
-                    );
-                }
+                // if (commandName === "stop_monitor_pair_for_liquidity") {
+                //     const pairContract = interaction.options.getString("pair");
+                //     this.stopMonitorPairForLiq(pairContract);
+                //     let pair = await this.getPoolInfo(
+                //         new PublicKey(pairContract)
+                //     );
+                //     const pairName = `${pair.token0Meta.symbol}, ${pair.token1Meta.symbol}`;
+                //     await interaction.reply(
+                //         `:stop_button: Stopped monitoring ${pairName} for liquidity`
+                //     );
+                // }
                 if (commandName === "set_config") {
                     const snipeAmount =
                         interaction.options.getNumber("snipe_amount");
@@ -524,12 +533,13 @@ class SolanaBot {
                             this.config.monitorNewPairs
                                 ? ":white_check_mark:"
                                 : ":x:"
-                        }\n` +
-                        `Monitoring for rugs: ${
-                            this.config.monitorRugs
-                                ? ":white_check_mark:"
-                                : ":x:"
-                        }\n`;
+                        }\n` ;
+                        // +
+                        // `Monitoring for rugs: ${
+                        //     this.config.monitorRugs
+                        //         ? ":white_check_mark:"
+                        //         : ":x:"
+                        // }\n`;
 
                     await interaction.reply(message);
                 }
@@ -1736,35 +1746,47 @@ class SolanaBot {
         });
     }
 
-    async scanForNewPairs(programAddress: string) {
-        const pubKey = new PublicKey(programAddress);
-        this.connection.onLogs(pubKey, async (logs: any) => {
-            if (logs.err == null) {
-                let foundCandidate = false;
+    enableMonitoringNewPairs() {
+        if (this.config.monitorNewPairs) {
+            console.log("Monitoring is already enabled.");
+            return;
+        }
+        this.config.monitorNewPairs = true;
+        const pubKey = new PublicKey(this.openBookAddress);
+        this.logSubscriptionId = this.connection.onLogs(pubKey, this.logHandler);
+    }
 
-                for (let i = 0; i < logs.logs.length - 1; i++) {
-                    const curLog = logs.logs[i];
-                    const nextLog = logs.logs[i + 1];
+    disableMonitoringNewPairs() {
+        if (!this.config.monitorNewPairs || this.logSubscriptionId === null) {
+            console.log("Monitoring is already disabled or not started yet.");
+            return;
+        }
+        this.connection.removeOnLogsListener(this.logSubscriptionId);
+        this.config.monitorNewPairs = false;
+        this.logSubscriptionId = null;
+    }
 
-                    if (
-                        curLog.includes(
-                            "Program 11111111111111111111111111111111 success"
-                        ) &&
-                        nextLog.includes(
-                            "Program srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX invoke [1]"
-                        )
-                    ) {
-                        foundCandidate = true;
-                        break;
-                    }
-                }
+    logHandler = async (logs: any) => {
+        if (!this.config.monitorNewPairs) return;
 
-                if (foundCandidate) {
-                    await this.handleNewMarket(logs.signature);
+        if (logs.err == null) {
+            let foundCandidate = false;
+            for (let i = 0; i < logs.logs.length - 1; i++) {
+                const curLog = logs.logs[i];
+                const nextLog = logs.logs[i + 1];
+
+                if (curLog.includes("Program 11111111111111111111111111111111 success") &&
+                    nextLog.includes("Program srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX invoke [1]")) {
+                    foundCandidate = true;
+                    break;
                 }
             }
-        });
-    }
+
+            if (foundCandidate) {
+                await this.handleNewMarket(logs.signature);
+            }
+        }
+    };
 
     async monitorPairForPriceChange(
         pair: typeof PublicKey,
