@@ -1495,8 +1495,8 @@ class SolanaBot {
             liquidityAdded < this.config.upperLiquidityBound &&
             liquidityAdded > this.config.lowerLiquidityBound &&
             poolOpenTime < moment() &&
-            poolOpenTime > moment().subtract(30, "seconds") &&
-            percentAddedToPool > this.config.percentAddedRequirement
+            poolOpenTime > moment().subtract(120, "seconds") &&
+            percentAddedToPool >= this.config.percentAddedRequirement
         ) {
             if (!this.config.live) {
                 // await this.monitorPairForPriceChange(pair, 10, 5, 10);
@@ -1510,7 +1510,7 @@ class SolanaBot {
             liquidityAdded > this.config.lowerLiquidityBound &&
             poolOpenTime > moment() &&
             poolOpenTime < moment().add(30, "minute") &&
-            percentAddedToPool > this.config.percentAddedRequirement
+            percentAddedToPool >= this.config.percentAddedRequirement
         ) {
             console.log(
                 `adding job to buy token at ${poolOpenTime}`.bg_magenta

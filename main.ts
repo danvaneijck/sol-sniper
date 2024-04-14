@@ -9,8 +9,8 @@ const main = async () => {
         const privateKey = process.env.KEY;
 
         const config = {
-            live: false, // turn live trading on and off
-            snipeAmount: 0.01, // %
+            live: true, // turn live trading on and off
+            snipeAmount: 0.001, // %
             percentAddedRequirement: 0.9,
             maxTrades: 2,
             profitGoal: 0.85, // %

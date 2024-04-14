@@ -310,5 +310,18 @@
     "stopLoss": 0.5,
     "moonBag": 0.1,
     "tradeTimeLimit": 2000
+  },
+  {
+    "pairContract": "BG5KAyxrfVo1cenuSKB82rbskweETnQaUgc22moEXjdU",
+    "tokenContract": "CxUbBkGPS1dqXtxAP9ufeBgVC8SCA4kLhw6tRYSMCDHw",
+    "timeBought": "2024-04-14T03:38:43.117Z",
+    "amountIn": "2235641",
+    "balance": "0",
+    "profit": "-2235641",
+    "isMoonBag": false,
+    "profitGoal": 0.85,
+    "stopLoss": 0.5,
+    "moonBag": 0.1,
+    "tradeTimeLimit": 2000
   }
 ]
